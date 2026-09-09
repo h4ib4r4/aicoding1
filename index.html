@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#f4f1e9">
+  <title>弈境 · 围棋复盘</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><i></i><i></i></div>
+        <div><strong>弈境</strong><span>本地棋谱与 AI 复盘</span></div>
+      </div>
+
+      <nav class="nav" aria-label="主导航">
+        <button class="nav-item active"><span>▦</span>棋谱库<em>24</em></button>
+        <button class="nav-item"><span>◫</span>分析任务<em>2</em></button>
+        <button class="nav-item"><span>⌁</span>数据统计</button>
+      </nav>
+
+      <div class="section-title"><span>棋谱</span><button title="新建文件夹">＋</button></div>
+      <div class="folder-list">
+        <button class="folder active"><span>◉</span>全部棋谱<b>24</b></button>
+        <button class="folder"><span>◇</span>最近复盘<b>6</b></button>
+        <button class="folder"><span>□</span>我的对局<b>12</b></button>
+        <button class="folder"><span>□</span>职业棋谱<b>8</b></button>
+        <button class="folder muted"><span>⌫</span>回收站<b>2</b></button>
+      </div>
+
+      <div class="section-title"><span>标签</span><button title="新建标签">＋</button></div>
+      <div class="tags">
+        <button data-tag="布局研究"><i class="dot green"></i>布局研究</button>
+        <button data-tag="关键对局"><i class="dot orange"></i>关键对局</button>
+        <button data-tag="待复盘"><i class="dot blue"></i>待复盘</button>
+      </div>
+
+      <div class="storage">
+        <div><span>本地空间</span><b>1.2 GB / 10 GB</b></div>
+        <div class="storage-bar"><i></i></div>
+        <small>所有数据仅保存在此设备</small>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <label class="search"><span>⌕</span><input id="searchInput" type="search" placeholder="搜索棋手、赛事、标签或棋谱内容…"><kbd>⌘ K</kbd></label>
+        <div class="top-actions">
+          <button class="icon-btn" title="设置">⚙</button>
+          <button class="primary-btn" id="importButton">＋ 导入 SGF</button>
+          <input id="fileInput" type="file" accept=".sgf" multiple hidden>
+        </div>
+      </header>
+
+      <section class="content">
+        <div class="library-panel">
+          <div class="panel-heading">
+            <div><h1>全部棋谱</h1><p><span id="gameCount">24</span> 局棋谱 · 最近更新于今天</p></div>
+            <div class="view-actions"><button title="筛选">☷</button><button class="active" title="列表视图">☰</button><button title="网格视图">▦</button></div>
+          </div>
+          <div class="game-list" id="gameList"></div>
+        </div>
+
+        <section class="review-panel">
+          <div class="game-header">
+            <div class="breadcrumb"><span>全部棋谱</span><b>›</b><strong id="gameTitle">秋季升段赛 · 第 3 轮</strong></div>
+            <div class="game-actions"><button title="收藏">☆</button><button title="更多">•••</button></div>
+          </div>
+
+          <div class="review-body">
+            <div class="board-column">
+              <div class="players">
+                <div class="player"><i class="stone black"></i><div><strong id="blackName">林野 <small>7段</small></strong><span>黑棋</span></div><b id="blackWin">43.2%</b></div>
+                <div class="versus"><span>2026.08.24</span><strong>中盘胜</strong><span>贴 7.5 目</span></div>
+                <div class="player white-player"><b id="whiteWin">56.8%</b><div><strong id="whiteName">陈星 <small>6段</small></strong><span>白棋</span></div><i class="stone white"></i></div>
+              </div>
+
+              <div class="board-wrap">
+                <canvas id="goBoard" width="760" height="760" aria-label="19路围棋棋盘"></canvas>
+                <div class="board-tools">
+                  <button id="numberToggle" class="active" title="显示手数">⌗</button>
+                  <button id="heatToggle" class="active" title="AI 候选点">◉</button>
+                  <button id="markButton" title="标记当前点">△</button>
+                </div>
+              </div>
+
+              <div class="playback">
+                <button id="firstButton" title="第一手">|‹</button>
+                <button id="prevButton" title="上一手">‹</button>
+                <button class="play" id="playButton" title="自动播放">▶</button>
+                <button id="nextButton" title="下一手">›</button>
+                <button id="lastButton" title="最后一手">›|</button>
+                <div class="move-progress"><input id="moveSlider" type="range" min="0" max="62" value="38"><span>第 <b id="moveNumber">38</b> / <b id="moveTotal">62</b> 手</span></div>
+                <select id="speedSelect" aria-label="播放速度"><option value="1200">0.5×</option><option value="700" selected>1×</option><option value="350">2×</option></select>
+              </div>
+            </div>
+
+            <aside class="analysis-panel">
+              <div class="analysis-tabs"><button class="active" data-tab="ai">AI 分析</button><button data-tab="comment">评论 <span>3</span></button><button data-tab="info">信息</button></div>
+              <div id="aiTab" class="tab-content">
+                <div class="evaluation">
+                  <div class="eval-top"><span>局面评估 · 第 <b id="evalMove">38</b> 手</span><em class="status"><i></i>分析完成</em></div>
+                  <div class="eval-numbers"><div><small>黑棋胜率</small><strong id="evalBlack">43.2<sup>%</sup></strong></div><div class="score-lead"><span>白领先</span><b id="scoreLead">+3.4 目</b></div><div><small>白棋胜率</small><strong id="evalWhite">56.8<sup>%</sup></strong></div></div>
+                  <div class="winbar"><i id="blackBar"></i></div>
+                  <div class="swing down" id="swingText">↓ 较上一手 -12.6% · 疑问手</div>
+                </div>
+
+                <div class="candidate-section">
+                  <div class="subheading"><h3>AI 推荐</h3><span>访问 12.8k 次</span></div>
+                  <div id="candidateList" class="candidate-list"></div>
+                </div>
+
+                <div class="insight">
+                  <div class="insight-icon">✦</div>
+                  <div><strong>局面解读</strong><p id="insightText">黑棋实战在右边缓了一手，白棋抢到中央要点后建立优势。此处应先从左上角动出，保持全局主动。</p></div>
+                </div>
+
+                <div class="analyze-box">
+                  <div><span id="analysisLabel">全局分析已完成</span><b id="analysisMeta">62 / 62 手</b></div>
+                  <div class="analysis-progress"><i id="analysisProgress"></i></div>
+                  <button id="analyzeButton">重新分析</button>
+                </div>
+              </div>
+              <div id="commentTab" class="tab-content hidden">
+                <div class="comment-card"><b>第 18 手</b><p>这里的夹击很有气势，但下方还留有断点。</p><span>今天 10:24</span></div>
+                <div class="comment-card"><b>第 38 手</b><p>本局第一个明显的胜率转折点，建议重点研究 AI 变化。</p><span>今天 10:31</span></div>
+                <textarea placeholder="记录这一手的想法…"></textarea><button class="primary-btn">保存评论</button>
+              </div>
+              <div id="infoTab" class="tab-content hidden"><dl class="game-info"><dt>赛事</dt><dd>秋季升段赛</dd><dt>日期</dt><dd>2026-08-24</dd><dt>地点</dt><dd>杭州棋院</dd><dt>规则</dt><dd>中国规则</dd><dt>结果</dt><dd>白中盘胜</dd></dl></div>
+            </aside>
+          </div>
+
+          <div class="chart-panel">
+            <div class="chart-heading"><div><h3>胜率走势</h3><span><i class="legend-black"></i>黑棋胜率</span><span><i class="legend-key"></i>关键手</span></div><div class="chart-tabs"><button class="active">胜率</button><button>目差</button></div></div>
+            <canvas id="winChart" width="1200" height="220"></canvas>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status"></div>
+  <script src="core.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

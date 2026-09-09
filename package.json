@@ -1,0 +1,10 @@
+{
+  "name": "yijing-go-review-demo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "围棋棋谱管理与 AI 复盘工具交互 Demo",
+  "scripts": {
+    "test": "node --test",
+    "start": "node server.js"
+  }
+}
