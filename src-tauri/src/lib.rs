@@ -55,6 +55,8 @@ struct MoveInput {
 #[serde(rename_all = "camelCase")]
 struct AnalysisRequest {
     moves: Vec<MoveInput>,
+    #[serde(default)]
+    initial_stones: Vec<MoveInput>,
     analyze_turns: Vec<u32>,
     max_visits: Option<u32>,
 }
@@ -355,6 +357,11 @@ fn analyze_position(
             Ok(serde_json::json!([item.color, point]))
         })
         .collect::<Result<Vec<_>, String>>()?;
+    let initial_stones = request
+        .initial_stones
+        .iter()
+        .map(|item| Ok(serde_json::json!([item.color, coords_to_gtp(item.x.ok_or("摆子缺少横坐标")?, item.y.ok_or("摆子缺少纵坐标")?)])))
+        .collect::<Result<Vec<_>, String>>()?;
     let id = format!(
         "tauri-{}",
         std::time::SystemTime::now()
@@ -365,6 +372,7 @@ fn analyze_position(
     let query = serde_json::json!({
         "id": id,
         "moves": moves,
+        "initialStones": initial_stones,
         "rules": "chinese",
         "komi": 7.5,
         "boardXSize": 19,

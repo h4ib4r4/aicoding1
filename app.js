@@ -20,7 +20,12 @@ const demoGames = [
 ];
 
 function loadLocal(key, fallback) { try { const value = JSON.parse(localStorage.getItem(key)); return value === null || value === undefined ? fallback : value; } catch { return fallback; } }
-const games = loadLocal('yijing.games', demoGames);
+const games = loadLocal('yijing.games', demoGames).map(game => {
+  if (game.sgfText) {
+    try { return { ...game, ...parseSgf(game.sgfText), title: game.title, folder: game.folder, tag: game.tag, favorite: game.favorite, deleted: game.deleted }; } catch {}
+  }
+  return { ...game, moves: (game.moves || []).map(move => !move.pass && (move.x < 0 || move.y < 0 || move.x >= 19 || move.y >= 19) ? { color: move.color, pass: true } : move) };
+});
 const customFolders = loadLocal('yijing.folders', []);
 const customTags = loadLocal('yijing.tags', []);
 
@@ -142,7 +147,7 @@ function drawBoard() {
   ctx.strokeStyle='rgba(64,44,21,.72)';ctx.lineWidth=1.25;
   for(let i=0;i<19;i++){const n=pad+i*step;ctx.beginPath();ctx.moveTo(pad,n);ctx.lineTo(w-pad,n);ctx.stroke();ctx.beginPath();ctx.moveTo(n,pad);ctx.lineTo(n,w-pad);ctx.stroke()}
   ctx.fillStyle='#4f371f';[3,9,15].forEach(x=>[3,9,15].forEach(y=>{ctx.beginPath();ctx.arc(pad+x*step,pad+y*step,4.2,0,Math.PI*2);ctx.fill()}));
-  const board=replay(currentGame.moves,currentMove);
+  const board=replay(currentGame.moves,currentMove,19,currentGame.setup||[]);
   board.forEach((row,y)=>row.forEach((color,x)=>{if(!color)return;const cx=pad+x*step,cy=pad+y*step,r=step*.45;const g=ctx.createRadialGradient(cx-r*.35,cy-r*.4,1,cx,cy,r);if(color==='B'){g.addColorStop(0,'#555b57');g.addColorStop(.6,'#202521');g.addColorStop(1,'#090b0a')}else{g.addColorStop(0,'#fff');g.addColorStop(.72,'#f1f0eb');g.addColorStop(1,'#c9c7bf')}ctx.fillStyle=g;ctx.shadowColor='#4c321f88';ctx.shadowBlur=4;ctx.shadowOffsetY=2;ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.fill();ctx.shadowColor='transparent';
     if(showNumbers){const idx=currentGame.moves.slice(0,currentMove).map(m=>`${m.x},${m.y}`).lastIndexOf(`${x},${y}`)+1;if(idx){ctx.fillStyle=color==='B'?'#eee':'#333';ctx.font=`600 ${idx>99?11:13}px sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(idx,cx,cy)}}}));
   if(currentMove){const last=currentGame.moves[currentMove-1];if(!last.pass){ctx.strokeStyle='#c95b46';ctx.lineWidth=3;ctx.beginPath();ctx.arc(pad+last.x*step,pad+last.y*step,step*.17,0,Math.PI*2);ctx.stroke()}}
@@ -209,15 +214,15 @@ function speakJudgement(result) {
   speechSynthesis.cancel(); speechSynthesis.speak(utterance); lastSpokenMove = currentMove;
 }
 
-async function requestAnalysis(turns,maxVisits){const request={moves:currentGame.moves,analyzeTurns:turns,maxVisits};if(window.__TAURI__?.core?.invoke)return window.__TAURI__.core.invoke('analyze_position',{request});const response=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)});const body=await response.json();if(!response.ok)throw new Error(body.error||'KataGo 分析失败');return body.results}
+async function requestAnalysis(turns,maxVisits){const request={moves:currentGame.moves,initialStones:currentGame.setup||[],analyzeTurns:turns,maxVisits};if(window.__TAURI__?.core?.invoke)return window.__TAURI__.core.invoke('analyze_position',{request});const response=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)});const body=await response.json();if(!response.ok)throw new Error(body.error||'KataGo 分析失败');return body.results}
 async function analyzeCurrentPosition(){const token=++analysisRequest;$('engineStatus').className='status';$('engineStatus').innerHTML='<i></i>CUDA 分析中';$('swingText').textContent='正在等待本地 KataGo…';try{const results=await requestAnalysis([currentMove],settings.positionVisits);if(token!==analysisRequest)return;results.forEach(result=>analyses.set(result.turnNumber,result));$('engineStatus').innerHTML='<i></i>TensorRT / CUDA';renderAnalysis();drawBoard();drawChart();if(pendingJudgementMove===currentMove){speakJudgement(analyses.get(currentMove));pendingJudgementMove=null}}catch(error){if(token!==analysisRequest)return;$('engineStatus').className='status error';$('engineStatus').innerHTML='<i></i>引擎不可用';$('swingText').textContent=error.message;showToast(error.message)}}
 
-function setMove(value){const next=Math.max(0,Math.min(Number(value),currentGame.moves.length));const forward=next===currentMove+1;if(forward){playStoneSound(capturedStones(currentGame.moves,next)>0)}currentMove=next;pendingJudgementMove=forward?next:null;update();if(forward&&analyses.has(currentMove)){speakJudgement(analyses.get(currentMove));pendingJudgementMove=null}clearTimeout(setMove.timer);setMove.timer=setTimeout(()=>{if(!analyses.has(currentMove))analyzeCurrentPosition()},180)}
+function setMove(value){const next=Math.max(0,Math.min(Number(value),currentGame.moves.length));const forward=next===currentMove+1;if(forward){playStoneSound(capturedStones(currentGame.moves,next,19,currentGame.setup||[])>0)}currentMove=next;pendingJudgementMove=forward?next:null;update();if(forward&&analyses.has(currentMove)){speakJudgement(analyses.get(currentMove));pendingJudgementMove=null}clearTimeout(setMove.timer);setMove.timer=setTimeout(()=>{if(!analyses.has(currentMove))analyzeCurrentPosition()},180)}
 function togglePlay(){if(playing){clearInterval(playing);playing=null;$('playButton').textContent='▶';return}if(currentMove>=currentGame.moves.length)currentMove=0;$('playButton').textContent='Ⅱ';playing=setInterval(()=>{if(currentMove>=currentGame.moves.length){togglePlay();return}setMove(currentMove+1)},Number($('speedSelect').value))}
 
 $('searchInput').addEventListener('input',e=>renderGames(e.target.value));
 $('importButton').onclick=()=>$('fileInput').click();
-$('fileInput').onchange=async e=>{pendingImports=[];for(const file of e.target.files){try{const parsed=parseSgf(await file.text());pendingImports.push({...parsed,title:parsed.title==='导入的棋谱'?file.name.replace(/\.sgf$/i,''):parsed.title,fileName:file.name,folder:'mine'});}catch(err){showToast(`${file.name}: ${err.message}`)}}if(pendingImports.length)openGameModal('import');e.target.value=''};
+$('fileInput').onchange=async e=>{pendingImports=[];for(const file of e.target.files){try{const sgfText=await file.text(),parsed=parseSgf(sgfText);pendingImports.push({...parsed,sgfText,title:parsed.title==='导入的棋谱'?file.name.replace(/\.sgf$/i,''):parsed.title,fileName:file.name,folder:'mine'});}catch(err){showToast(`${file.name}: ${err.message}`)}}if(pendingImports.length)openGameModal('import');e.target.value=''};
 $('editGameButton').onclick=()=>openGameModal('edit');
 $('exportButton').onclick=()=>{
   const esc=value=>String(value||'').replace(/\\/g,'\\\\').replace(/\]/g,'\\]').replace(/\[/g,'\\[').replace(/\r?\n/g,'\\n');

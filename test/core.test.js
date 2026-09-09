@@ -42,6 +42,26 @@ test('解析 SGF 元数据与主线着法', () => {
   assert.equal(game.moves[2].pass, true);
 });
 
+test('只解析 SGF 主线并兼容旧式虚着', () => {
+  const game = parseSgf('(;GM[1]FF[4]SZ[19];B[pd];W[dd](;B[qp];W[dc])(;B[tt];W[pp]))');
+  assert.equal(game.moves.length, 4);
+  assert.deepEqual(game.moves[0], {color:'B',x:15,y:3});
+  assert.deepEqual(game.moves[2], {color:'B',x:16,y:15});
+  assert.deepEqual(parseSgf('(;SZ[19];B[tt])').moves[0], {color:'B',pass:true});
+});
+
+test('明确拒绝当前不支持的棋盘尺寸', () => {
+  assert.throws(() => parseSgf('(;SZ[13];B[dd])'), /仅支持 19 路/);
+});
+
+test('解析并重放让子棋初始摆子', () => {
+  const game = parseSgf('(;SZ[19]HA[2]AB[pd][dp];W[qq])');
+  assert.deepEqual(game.setup, [{color:'B',x:15,y:3},{color:'B',x:3,y:15}]);
+  const board = replay(game.moves, 1, 19, game.setup);
+  assert.equal(board[3][15], 'B');
+  assert.equal(board[16][16], 'W');
+});
+
 test('坐标名称跳过字母 I', () => {
   assert.equal(pointName(8, 3), 'J16');
   assert.equal(coordsToGtp(8, 3), 'J16');
@@ -49,8 +69,9 @@ test('坐标名称跳过字母 I', () => {
 });
 
 test('生成 KataGo Analysis Engine 查询', () => {
-  const query = buildQuery({ id: 'test', moves: [{x:15,y:3,color:'B'}], analyzeTurns: [0,1], maxVisits: 32 });
+  const query = buildQuery({ id: 'test', moves: [{x:15,y:3,color:'B'}], initialStones: [{x:3,y:3,color:'B'}], analyzeTurns: [0,1], maxVisits: 32 });
   assert.deepEqual(query.moves, [['B','Q16']]);
+  assert.deepEqual(query.initialStones, [['B','D16']]);
   assert.deepEqual(query.analyzeTurns, [0,1]);
   assert.equal(query.maxVisits, 32);
 });

@@ -52,8 +52,11 @@
     return next;
   }
 
-  function replay(moves, count, size = BOARD_SIZE) {
+  function replay(moves, count, size = BOARD_SIZE, setup = []) {
     let board = emptyBoard(size);
+    for (const stone of setup) {
+      if (!stone.pass && stone.x >= 0 && stone.y >= 0 && stone.x < size && stone.y < size) board[stone.y][stone.x] = stone.color;
+    }
     for (const move of moves.slice(0, count)) {
       const updated = applyMove(board, move);
       if (updated) board = updated;
@@ -61,9 +64,9 @@
     return board;
   }
 
-  function capturedStones(moves, count, size = BOARD_SIZE) {
+  function capturedStones(moves, count, size = BOARD_SIZE, setup = []) {
     if (!Number.isInteger(count) || count <= 0 || count > moves.length) return 0;
-    const before = replay(moves, count - 1, size);
+    const before = replay(moves, count - 1, size, setup);
     const move = moves[count - 1];
     const after = applyMove(before, move);
     if (!after || !move || move.pass) return 0;
@@ -75,26 +78,60 @@
     return captured;
   }
 
-  function sgfPoint(value) {
+  function sgfPoint(value, size = BOARD_SIZE) {
     if (!value || value.length < 2) return { pass: true };
-    return { x: value.charCodeAt(0) - 97, y: value.charCodeAt(1) - 97 };
+    const x = value.charCodeAt(0) - 97;
+    const y = value.charCodeAt(1) - 97;
+    return x < 0 || y < 0 || x >= size || y >= size ? { pass: true } : { x, y };
+  }
+
+  function mainSgfSequence(text) {
+    function readTree(start) {
+      let result = '', inValue = false, escaped = false, followedFirstChild = false;
+      for (let i = start + 1; i < text.length; i++) {
+        const char = text[i];
+        if (escaped) { result += char; escaped = false; continue; }
+        if (inValue && char === '\\') { result += char; escaped = true; continue; }
+        if (char === '[') { inValue = true; result += char; continue; }
+        if (char === ']') { inValue = false; result += char; continue; }
+        if (!inValue && char === '(') {
+          const child = readTree(i);
+          if (!followedFirstChild) { result += child.result; followedFirstChild = true; }
+          i = child.end;
+          continue;
+        }
+        if (!inValue && char === ')') return { result, end: i };
+        result += char;
+      }
+      return { result, end: text.length - 1 };
+    }
+    const start = text.indexOf('(');
+    return start < 0 ? '' : readTree(start).result;
   }
 
   function parseSgf(text) {
     if (typeof text !== 'string' || !text.includes('(;')) throw new Error('不是有效的 SGF 文件');
+    const main = mainSgfSequence(text);
     const prop = key => {
-      const match = text.match(new RegExp(`${key}\\[((?:\\\\.|[^\\]])*)\\]`));
+      const match = main.match(new RegExp(`${key}\\[((?:\\\\.|[^\\]])*)\\]`));
       return match ? match[1].replace(/\\\]/g, ']').replace(/\\\\/g, '\\') : '';
     };
+    const boardSize = Number(prop('SZ') || BOARD_SIZE);
+    if (boardSize !== BOARD_SIZE) throw new Error(`目前仅支持 19 路棋谱，此文件为 ${boardSize} 路`);
+    const setup = [];
+    for (const [key, color] of [['AB','B'],['AW','W']]) {
+      const group = main.match(new RegExp(`${key}((?:\\[(?:\\\\.|[^\\]])*\\])+)`));
+      if (group) for (const value of group[1].matchAll(/\[([^\]]*)\]/g)) setup.push({ color, ...sgfPoint(value[1], boardSize) });
+    }
     const moves = [];
     const moveRegex = /;(B|W)\[([^\]]*)\]/g;
     let match;
-    while ((match = moveRegex.exec(text))) moves.push({ color: match[1], ...sgfPoint(match[2]) });
+    while ((match = moveRegex.exec(main))) moves.push({ color: match[1], ...sgfPoint(match[2], boardSize) });
     return {
       title: prop('GN') || prop('EV') || '导入的棋谱',
       black: prop('PB') || '黑棋', white: prop('PW') || '白棋',
       blackRank: prop('BR'), whiteRank: prop('WR'),
-      result: prop('RE') || '未知', date: prop('DT') || '', event: prop('EV') || '', moves
+      result: prop('RE') || '未知', date: prop('DT') || '', event: prop('EV') || '', setup, moves
     };
   }
 
@@ -111,5 +148,5 @@
     return x < 0 || y < 0 || y >= size ? null : { x, y };
   }
 
-  return { BOARD_SIZE, emptyBoard, neighbors, groupAt, applyMove, replay, capturedStones, parseSgf, pointName, gtpPointToCoords };
+  return { BOARD_SIZE, emptyBoard, neighbors, groupAt, applyMove, replay, capturedStones, sgfPoint, mainSgfSequence, parseSgf, pointName, gtpPointToCoords };
 });

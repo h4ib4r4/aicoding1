@@ -17,10 +17,11 @@ function resolveConfig(env = process.env) {
   };
 }
 
-function buildQuery({ id, moves, analyzeTurns, maxVisits = 64 }) {
+function buildQuery({ id, moves, initialStones = [], analyzeTurns, maxVisits = 64 }) {
   return {
     id,
     moves: moves.map(move => [move.color, move.pass ? 'pass' : coordsToGtp(move.x, move.y)]),
+    initialStones: initialStones.map(stone => [stone.color, coordsToGtp(stone.x, stone.y)]),
     rules: 'chinese', komi: 7.5, boardXSize: 19, boardYSize: 19,
     analyzeTurns, maxVisits, includePolicy: true
   };
