@@ -16,9 +16,9 @@
       </div>
 
       <nav class="nav" aria-label="主导航">
-        <button class="nav-item active"><span>▦</span>棋谱库<em>24</em></button>
-        <button class="nav-item"><span>◫</span>分析任务<em>2</em></button>
-        <button class="nav-item"><span>⌁</span>数据统计</button>
+        <button class="nav-item active" data-view="library"><span>▦</span>棋谱库<em id="libraryCount">6</em></button>
+        <button class="nav-item" data-view="tasks"><span>◫</span>分析任务<em id="taskCount">0</em></button>
+        <button class="nav-item" data-view="stats"><span>⌁</span>数据统计</button>
       </nav>
 
       <div class="section-title"><span>棋谱</span><button id="newFolderButton" title="新建文件夹">＋</button></div>
@@ -30,12 +30,8 @@
         <button class="folder muted" data-folder="trash"><span>⌫</span>回收站<b>0</b></button>
       </div>
 
-      <div class="section-title"><span>标签</span><button title="新建标签">＋</button></div>
-      <div class="tags">
-        <button data-tag="布局研究"><i class="dot green"></i>布局研究</button>
-        <button data-tag="关键对局"><i class="dot orange"></i>关键对局</button>
-        <button data-tag="待复盘"><i class="dot blue"></i>待复盘</button>
-      </div>
+      <div class="section-title"><span>标签</span><button id="newTagButton" title="新建标签">＋</button></div>
+      <div class="tags" id="tagList"></div>
 
       <div class="storage">
         <div><span>本地空间</span><b>1.2 GB / 10 GB</b></div>
@@ -48,7 +44,7 @@
       <header class="topbar">
         <label class="search"><span>⌕</span><input id="searchInput" type="search" placeholder="搜索棋手、赛事、标签或棋谱内容…"><kbd>⌘ K</kbd></label>
         <div class="top-actions">
-          <button class="icon-btn" title="设置">⚙</button>
+          <button class="icon-btn" id="settingsButton" title="设置">⚙</button>
           <button class="primary-btn" id="importButton">＋ 导入 SGF</button>
           <input id="fileInput" type="file" accept=".sgf" multiple hidden>
         </div>
@@ -58,7 +54,7 @@
         <div class="library-panel">
           <div class="panel-heading">
             <div><h1 id="panelTitle">全部棋谱</h1><p><span id="gameCount">6</span> 局棋谱 · 最近更新于今天</p></div>
-            <div class="view-actions"><button title="筛选">☷</button><button class="active" title="列表视图">☰</button><button title="网格视图">▦</button></div>
+            <div class="view-actions"><button id="filterButton" title="筛选">☷</button><button id="listViewButton" class="active" title="列表视图">☰</button><button id="gridViewButton" title="网格视图">▦</button></div>
           </div>
           <div class="game-list" id="gameList"></div>
         </div>
@@ -66,7 +62,7 @@
         <section class="review-panel">
           <div class="game-header">
             <div class="breadcrumb"><span id="breadcrumbFolder">全部棋谱</span><b>›</b><strong id="gameTitle">秋季升段赛 · 第 3 轮</strong></div>
-            <div class="game-actions"><button title="收藏">☆</button><button id="editGameButton" title="重命名与分类">•••</button></div>
+            <div class="game-actions"><button id="favoriteButton" title="收藏">☆</button><button id="editGameButton" title="重命名与分类">•••</button></div>
           </div>
 
           <div class="review-body">
@@ -122,11 +118,12 @@
           </div>
 
           <div class="chart-panel">
-            <div class="chart-heading"><div><h3>胜率走势</h3><span><i class="legend-black"></i>黑棋胜率</span><span><i class="legend-key"></i>关键手</span></div><div class="chart-tabs"><button class="active">胜率</button><button>目差</button></div></div>
+            <div class="chart-heading"><div><h3 id="chartTitle">胜率走势</h3><span id="chartLegend"><i class="legend-black"></i>黑棋胜率</span><span><i class="legend-key"></i>关键手</span></div><div class="chart-tabs"><button class="active" data-chart="winrate">胜率</button><button data-chart="score">目差</button></div></div>
             <canvas id="winChart" width="1200" height="220"></canvas>
           </div>
         </section>
       </section>
+      <section id="featureView" class="feature-view hidden"></section>
     </main>
   </div>
 
@@ -136,8 +133,34 @@
       <div class="modal-heading"><div><small id="gameModalStep">棋谱属性</small><h2 id="gameModalTitle">编辑棋谱</h2></div><button type="button" class="modal-close" data-close="gameModal">×</button></div>
       <label>棋谱名称<input id="gameNameInput" maxlength="80" required></label>
       <label>归属文件夹<select id="gameFolderSelect"></select></label>
+      <label>棋谱标签<select id="gameTagSelect"></select></label>
       <p class="modal-hint" id="gameModalHint">名称和分类仅保存在本机，可随时再次修改。</p>
-      <div class="modal-actions"><button type="button" class="secondary-btn" data-close="gameModal">取消</button><button type="submit" class="primary-btn" id="gameSaveButton">保存</button></div>
+      <div class="modal-actions split"><button type="button" class="danger-btn" id="deleteGameButton">移到回收站</button><span></span><button type="button" class="secondary-btn" data-close="gameModal">取消</button><button type="submit" class="primary-btn" id="gameSaveButton">保存</button></div>
+    </form>
+  </div>
+  <div id="tagModal" class="modal-backdrop hidden">
+    <form class="modal compact" id="tagForm">
+      <div class="modal-heading"><div><small>棋谱标记</small><h2>新建标签</h2></div><button type="button" class="modal-close" data-close="tagModal">×</button></div>
+      <label>标签名称<input id="tagNameInput" maxlength="16" placeholder="例如：官子练习" required></label>
+      <div class="modal-actions"><button type="button" class="secondary-btn" data-close="tagModal">取消</button><button type="submit" class="primary-btn">创建</button></div>
+    </form>
+  </div>
+  <div id="filterModal" class="modal-backdrop hidden">
+    <form class="modal compact" id="filterForm">
+      <div class="modal-heading"><div><small>棋谱库</small><h2>筛选棋谱</h2></div><button type="button" class="modal-close" data-close="filterModal">×</button></div>
+      <label>对局结果<select id="resultFilter"><option value="">全部结果</option><option value="black">黑棋胜</option><option value="white">白棋胜</option></select></label>
+      <label class="check-label"><input id="favoriteFilter" type="checkbox">仅显示收藏棋谱</label>
+      <div class="modal-actions"><button type="button" class="secondary-btn" id="resetFilterButton">重置</button><button type="submit" class="primary-btn">应用筛选</button></div>
+    </form>
+  </div>
+  <div id="settingsModal" class="modal-backdrop hidden">
+    <form class="modal compact" id="settingsForm">
+      <div class="modal-heading"><div><small>本地 AI</small><h2>分析设置</h2></div><button type="button" class="modal-close" data-close="settingsModal">×</button></div>
+      <label>当前局面访问次数<input id="positionVisitsInput" type="number" min="8" max="500" step="8"></label>
+      <label>整局每手访问次数<input id="fullVisitsInput" type="number" min="4" max="200" step="4"></label>
+      <label>关键手阈值（胜率百分点）<input id="criticalThresholdInput" type="number" min="1" max="50"></label>
+      <p class="modal-hint">数值越高分析越准确，也会占用更多 GPU 资源。</p>
+      <div class="modal-actions"><button type="button" class="secondary-btn" data-close="settingsModal">取消</button><button type="submit" class="primary-btn">保存设置</button></div>
     </form>
   </div>
   <div id="folderModal" class="modal-backdrop hidden">

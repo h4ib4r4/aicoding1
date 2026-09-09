@@ -22,6 +22,7 @@ const demoGames = [
 function loadLocal(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch { return fallback; } }
 const games = loadLocal('yijing.games', demoGames);
 const customFolders = loadLocal('yijing.folders', []);
+const customTags = loadLocal('yijing.tags', []);
 
 let currentGame = games[0];
 let currentMove = 38;
@@ -32,6 +33,12 @@ let mark = null;
 let analyses = new Map();
 let analysisRequest = 0;
 let activeFolder = 'all';
+let chartMode = 'winrate';
+let currentView = 'library';
+let listMode = 'list';
+let libraryFilter = { result: '', favorites: false };
+let settings = loadLocal('yijing.settings', { positionVisits: 64, fullVisits: 24, criticalThreshold: 10 });
+let analysisTasks = loadLocal('yijing.tasks', []);
 
 const folderNames = { all: '全部棋谱', recent: '最近复盘', mine: '我的对局', professional: '职业棋谱', trash: '回收站' };
 let pendingImports = [];
@@ -44,8 +51,16 @@ const chartCanvas = $('winChart');
 const chartCtx = chartCanvas.getContext('2d');
 
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char])); }
-function saveLibrary() { try { localStorage.setItem('yijing.games', JSON.stringify(games)); localStorage.setItem('yijing.folders', JSON.stringify(customFolders)); return true; } catch { showToast('本地存储空间不足，修改仅在本次打开期间有效'); return false; } }
+function saveLibrary() { try { localStorage.setItem('yijing.games', JSON.stringify(games)); localStorage.setItem('yijing.folders', JSON.stringify(customFolders)); localStorage.setItem('yijing.tags', JSON.stringify(customTags)); localStorage.setItem('yijing.settings', JSON.stringify(settings)); localStorage.setItem('yijing.tasks', JSON.stringify(analysisTasks.slice(0,20))); return true; } catch { showToast('本地存储空间不足，修改仅在本次打开期间有效'); return false; } }
 function folderOptions(selected = 'mine') { return [{id:'mine',name:'我的对局'},{id:'professional',name:'职业棋谱'},...customFolders].map(folder=>`<option value="${escapeHtml(folder.id)}" ${folder.id===selected?'selected':''}>${escapeHtml(folder.name)}</option>`).join(''); }
+function allTags() { return ['布局研究','关键对局','待复盘',...customTags].filter((tag,index,array)=>array.indexOf(tag)===index); }
+function tagOptions(selected = '') { return ['<option value="">无标签</option>',...allTags().map(tag=>`<option value="${escapeHtml(tag)}" ${tag===selected?'selected':''}>${escapeHtml(tag)}</option>`)].join(''); }
+
+function renderTags() {
+  const colors=['green','orange','blue'];
+  $('tagList').innerHTML=allTags().map((tag,index)=>`<button data-tag="${escapeHtml(tag)}"><i class="dot ${colors[index%3]}"></i>${escapeHtml(tag)}</button>`).join('');
+  document.querySelectorAll('.tags button').forEach(button=>button.onclick=()=>{activeFolder='all';renderFolders();$('searchInput').value=button.dataset.tag;renderGames(button.dataset.tag);document.querySelectorAll('.tags button').forEach(item=>item.classList.toggle('active',item===button))});
+}
 
 function renderFolders() {
   const items = [
@@ -58,6 +73,7 @@ function renderFolders() {
   ];
   items.forEach(item=>{folderNames[item.id]=item.name});
   $('folderList').innerHTML=items.map(item=>`<button class="folder ${item.id===activeFolder?'active':''} ${item.muted?'muted':''}" data-folder="${escapeHtml(item.id)}"><span>${item.icon}</span>${escapeHtml(item.name)}<b>${item.count}</b></button>`).join('');
+  $('libraryCount').textContent=items[0].count;
   document.querySelectorAll('.folder').forEach(button=>button.onclick=()=>selectFolder(button.dataset.folder));
 }
 
@@ -71,13 +87,40 @@ function openGameModal(mode, game = currentGame) {
   $('gameModalStep').textContent = importing ? `待导入 ${pendingImports.length} 局` : `${game.black} vs ${game.white}`;
   $('gameNameInput').value = source.title;
   $('gameFolderSelect').innerHTML = folderOptions(source.folder || 'mine');
+  $('gameTagSelect').innerHTML = tagOptions(source.tag || '');
   $('gameModalHint').textContent = importing ? `来源：${source.fileName}` : '名称和分类仅保存在本机，可随时再次修改。';
   $('gameSaveButton').textContent = importing ? (pendingImports.length > 1 ? '保存并继续' : '完成导入') : '保存';
+  $('deleteGameButton').classList.toggle('hidden', importing);
+  if (!importing) $('deleteGameButton').textContent = game.deleted ? '恢复棋谱' : '移到回收站';
   $('gameModal').classList.remove('hidden');
   setTimeout(()=>$('gameNameInput').select(),0);
 }
 
 function closeModal(id) { $(id).classList.add('hidden'); if(id==='gameModal'&&modalMode==='import') pendingImports=[]; }
+
+function renderFeatureView() {
+  if(currentView==='tasks') {
+    $('featureView').innerHTML=`<div class="feature-heading"><div><small>本地 KataGo 队列</small><h1>分析任务</h1></div><button class="secondary-btn" id="backToBoard">返回棋盘</button></div><div class="task-list">${analysisTasks.length?analysisTasks.map(task=>`<article class="task-card"><div class="task-status ${task.status}">${task.status==='done'?'已完成':task.status==='failed'?'失败':'分析中'}</div><div><strong>${escapeHtml(task.title)}</strong><span>${escapeHtml(task.detail)}</span></div><time>${escapeHtml(task.time)}</time></article>`).join(''):'<div class="feature-empty">还没有整局分析任务<br><small>打开棋谱后点击“分析整局”即可创建任务</small></div>'}</div>`;
+  } else {
+    const active=games.filter(game=>!game.deleted),blackWins=active.filter(game=>game.result.startsWith('黑')).length,whiteWins=active.filter(game=>game.result.startsWith('白')).length,total=Math.max(active.length,1);
+    const folders=[{id:'mine',name:'我的对局'},{id:'professional',name:'职业棋谱'},...customFolders];
+    $('featureView').innerHTML=`<div class="feature-heading"><div><small>本地棋谱库</small><h1>数据统计</h1></div><button class="secondary-btn" id="backToBoard">返回棋盘</button></div><div class="metric-grid"><article><span>对局总数</span><strong>${active.length}</strong><small>本地保存</small></article><article><span>黑棋胜局</span><strong>${blackWins}</strong><small>${(blackWins/total*100).toFixed(0)}%</small></article><article><span>白棋胜局</span><strong>${whiteWins}</strong><small>${(whiteWins/total*100).toFixed(0)}%</small></article><article><span>收藏棋谱</span><strong>${active.filter(game=>game.favorite).length}</strong><small>重点复盘</small></article></div><div class="folder-stats"><h2>分类分布</h2>${folders.map(folder=>{const count=active.filter(game=>game.folder===folder.id).length;return `<div><span>${escapeHtml(folder.name)}</span><i><b style="width:${count/total*100}%"></b></i><em>${count} 局</em></div>`}).join('')}</div>`;
+  }
+  $('backToBoard').onclick=()=>showView('library');
+}
+
+function showView(view) {
+  currentView=view;
+  document.querySelectorAll('.nav-item').forEach(button=>button.classList.toggle('active',button.dataset.view===view));
+  document.querySelector('.content').classList.toggle('hidden',view!=='library');
+  $('featureView').classList.toggle('hidden',view==='library');
+  if(view!=='library')renderFeatureView();
+}
+
+function addAnalysisTask(status, detail) {
+  const task={id:Date.now(),title:currentGame.title,status,detail,time:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})};
+  analysisTasks.unshift(task);$('taskCount').textContent=analysisTasks.filter(item=>item.status==='running').length;saveLibrary();return task;
+}
 
 function showToast(message) {
   const toast = $('toast'); toast.textContent = message; toast.classList.add('show');
@@ -92,21 +135,26 @@ function renderGames(filter = '') {
     || (activeFolder === 'recent' && !game.deleted && recentIds.has(game.id))
     || (activeFolder === 'trash' && game.deleted)
     || (!['all','recent','trash'].includes(activeFolder) && !game.deleted && game.folder === activeFolder);
-  const visible = games.filter((g, index) => folderMatch(g, index) && [g.title,g.black,g.white,g.event,g.tag].join(' ').toLowerCase().includes(query));
+  const visible = games.filter((g, index) => folderMatch(g, index)
+    && [g.title,g.black,g.white,g.event,g.tag].join(' ').toLowerCase().includes(query)
+    && (!libraryFilter.result || g.result.startsWith(libraryFilter.result === 'black' ? '黑' : '白'))
+    && (!libraryFilter.favorites || g.favorite));
   $('gameCount').textContent = visible.length;
   $('panelTitle').textContent = folderNames[activeFolder] || '棋谱';
   $('breadcrumbFolder').textContent = folderNames[activeFolder] || '棋谱';
   $('gameList').innerHTML = visible.map(g => `<article class="game-card ${g.id===currentGame.id?'active':''}" data-id="${g.id}">
-    <div class="date"><span>${escapeHtml(g.date)}</span><em>${escapeHtml(g.tag)}</em></div><h3>${escapeHtml(g.title)}</h3>
+    <div class="date"><span>${escapeHtml(g.date)}</span><em>${g.favorite?'★ ':''}${escapeHtml(g.tag)}</em></div><h3>${escapeHtml(g.title)}</h3>
     <div class="matchup"><i class="mini-stone"></i><span>${escapeHtml(g.black)}</span><b>vs</b><i class="mini-stone white"></i><span>${escapeHtml(g.white)}</span></div>
     <div class="meta"><span>${escapeHtml(g.event)}</span><span>${escapeHtml(g.result)}</span></div></article>`).join('') || '<p style="padding:30px;color:#999;text-align:center">此文件夹中还没有棋谱</p>';
   document.querySelectorAll('.game-card').forEach(card => card.onclick = () => selectGame(Number(card.dataset.id)));
+  $('gameList').classList.toggle('grid',listMode==='grid');
   return visible;
 }
 
 function selectGame(id) {
   currentGame = games.find(g => g.id === id) || games[0]; currentMove = Math.min(38,currentGame.moves.length); mark = null; analyses = new Map();
   $('gameTitle').textContent=currentGame.title; $('blackName').innerHTML=`${currentGame.black} <small>${currentGame.blackRank}</small>`; $('whiteName').innerHTML=`${currentGame.white} <small>${currentGame.whiteRank}</small>`;
+  $('favoriteButton').textContent=currentGame.favorite?'★':'☆';$('favoriteButton').classList.toggle('active',Boolean(currentGame.favorite));
   $('moveSlider').max=currentGame.moves.length; $('moveTotal').textContent=currentGame.moves.length;
   renderGames($('searchInput').value); update(); analyzeCurrentPosition();
 }
@@ -131,13 +179,22 @@ function candidates(){return (currentAnalysis()?.moveInfos||[]).slice(0,3).map(i
 function toBlackWin(_result, rate){return rate*100}
 function renderCandidates(){const result=currentAnalysis();const moves=candidates();$('candidateList').innerHTML=moves.length?moves.map((c,i)=>`<div class="candidate ${i===0?'active':''}" data-x="${c.x}" data-y="${c.y}"><span class="candidate-index">${i+1}</span><div class="candidate-main"><b>${c.move}</b><span>${i?'候选变化':'KataGo 首选'} · ${c.visits||0} 次访问</span></div><div class="candidate-win"><b>${toBlackWin(result,c.winrate).toFixed(1)}%</b><span>${Number(c.scoreLead||0)>=0?'+':''}${Number(c.scoreLead||0).toFixed(1)} 目</span></div></div>`).join(''):'<div class="empty-analysis">分析后显示推荐着法</div>';document.querySelectorAll('.candidate').forEach(el=>el.onclick=()=>{mark={x:+el.dataset.x,y:+el.dataset.y};drawBoard();showToast(`已在棋盘标出候选点 ${pointName(mark.x,mark.y)}`)})}
 
-function drawChart(){const ctx=chartCtx,w=chartCanvas.width,h=chartCanvas.height,p={l:35,r:15,t:15,b:26};ctx.clearRect(0,0,w,h);ctx.font='18px "Microsoft YaHei UI"';ctx.fillStyle='#929995';ctx.strokeStyle='#e7e7e2';ctx.lineWidth=1;[0,25,50,75,100].forEach(v=>{const y=p.t+(100-v)/100*(h-p.t-p.b);ctx.beginPath();ctx.moveTo(p.l,y);ctx.lineTo(w-p.r,y);ctx.stroke();ctx.fillText(v+'%',0,y+5)});ctx.setLineDash([6,6]);const half=p.t+.5*(h-p.t-p.b);ctx.strokeStyle='#aeb5b0';ctx.beginPath();ctx.moveTo(p.l,half);ctx.lineTo(w-p.r,half);ctx.stroke();ctx.setLineDash([]);const max=currentGame.moves.length;const points=[...analyses.values()].map(r=>({turn:r.turnNumber,rate:toBlackWin(r,r.rootInfo.winrate)})).sort((a,b)=>a.turn-b.turn);if(points.length){ctx.beginPath();points.forEach((point,i)=>{const x=p.l+point.turn/max*(w-p.l-p.r),y=p.t+(100-point.rate)/100*(h-p.t-p.b);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.strokeStyle='#2b6249';ctx.lineWidth=3;ctx.stroke();points.forEach((point,i)=>{if(i&&Math.abs(point.rate-points[i-1].rate)>10){const x=p.l+point.turn/max*(w-p.l-p.r),y=p.t+(100-point.rate)/100*(h-p.t-p.b);ctx.fillStyle='#b85d4b';ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fill()}})}const current=analyses.get(currentMove);if(current){const rate=toBlackWin(current,current.rootInfo.winrate),x=p.l+currentMove/max*(w-p.l-p.r),y=p.t+(100-rate)/100*(h-p.t-p.b);ctx.fillStyle='#fff';ctx.strokeStyle='#244e3c';ctx.lineWidth=4;ctx.beginPath();ctx.arc(x,y,7,0,Math.PI*2);ctx.fill();ctx.stroke()}}
+function drawChart(){
+  const ctx=chartCtx,w=chartCanvas.width,h=chartCanvas.height,p={l:42,r:15,t:15,b:26},max=currentGame.moves.length;
+  ctx.clearRect(0,0,w,h);ctx.font='18px "Microsoft YaHei UI"';ctx.fillStyle='#929995';ctx.strokeStyle='#e7e7e2';ctx.lineWidth=1;
+  const ticks=chartMode==='winrate'?[0,25,50,75,100]:[-20,-10,0,10,20];
+  const toY=value=>chartMode==='winrate'?p.t+(100-value)/100*(h-p.t-p.b):p.t+(20-Math.max(-20,Math.min(20,value)))/40*(h-p.t-p.b);
+  ticks.forEach(value=>{const y=toY(value);ctx.beginPath();ctx.moveTo(p.l,y);ctx.lineTo(w-p.r,y);ctx.stroke();ctx.fillText(`${value}${chartMode==='winrate'?'%':''}`,0,y+5)});
+  const points=[...analyses.values()].map(result=>({turn:result.turnNumber,value:chartMode==='winrate'?toBlackWin(result,result.rootInfo.winrate):Number(result.rootInfo.scoreLead||0)})).sort((a,b)=>a.turn-b.turn);
+  if(points.length){ctx.beginPath();points.forEach((point,index)=>{const x=p.l+point.turn/max*(w-p.l-p.r),y=toY(point.value);index?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.strokeStyle='#2b6249';ctx.lineWidth=3;ctx.stroke();points.forEach((point,index)=>{if(index&&Math.abs(point.value-points[index-1].value)>settings.criticalThreshold){const x=p.l+point.turn/max*(w-p.l-p.r),y=toY(point.value);ctx.fillStyle='#b85d4b';ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fill()}})}
+  const current=points.find(point=>point.turn===currentMove);if(current){const x=p.l+currentMove/max*(w-p.l-p.r),y=toY(current.value);ctx.fillStyle='#fff';ctx.strokeStyle='#244e3c';ctx.lineWidth=4;ctx.beginPath();ctx.arc(x,y,7,0,Math.PI*2);ctx.fill();ctx.stroke()}
+}
 
 function renderAnalysis(){const result=currentAnalysis();if(!result){$('blackWin').textContent=$('whiteWin').textContent='--';$('evalBlack').innerHTML=$('evalWhite').innerHTML='--<sup>%</sup>';$('blackBar').style.width='0';$('leadLabel').textContent='等待分析';$('scoreLead').textContent='-- 目';$('visitsLabel').textContent='等待引擎';$('swingText').className='swing';$('swingText').textContent='当前手尚未分析';renderCandidates();return}const black=toBlackWin(result,result.rootInfo.winrate),white=100-black,lead=Number(result.rootInfo.scoreLead||0);$('blackWin').textContent=black.toFixed(1)+'%';$('whiteWin').textContent=white.toFixed(1)+'%';$('evalBlack').innerHTML=black.toFixed(1)+'<sup>%</sup>';$('evalWhite').innerHTML=white.toFixed(1)+'<sup>%</sup>';$('blackBar').style.width=black+'%';$('leadLabel').textContent=`${lead>=0?'黑棋':'白棋'}领先`;$('scoreLead').textContent=`${lead>=0?'+':''}${lead.toFixed(1)} 目`;$('visitsLabel').textContent=`访问 ${result.rootInfo.visits||0} 次`;const previous=analyses.get(currentMove-1);const delta=previous?black-toBlackWin(previous,previous.rootInfo.winrate):null;const swing=$('swingText');swing.className='swing '+(delta===null?'':delta<0?'down':'up');swing.textContent=delta===null?`KataGo · ${result.rootInfo.visits||0} 次访问`:`${delta<0?'↓':'↑'} 较上一手 ${delta>=0?'+':''}${delta.toFixed(1)}% · ${Math.abs(delta)>10?'关键手':'局面平稳'}`;renderCandidates()}
 function update(){currentMove=Math.max(0,Math.min(currentMove,currentGame.moves.length));$('moveSlider').value=currentMove;$('moveNumber').textContent=currentMove;$('evalMove').textContent=currentMove;renderAnalysis();drawBoard();drawChart()}
 
 async function requestAnalysis(turns,maxVisits){const request={moves:currentGame.moves,analyzeTurns:turns,maxVisits};if(window.__TAURI__?.core?.invoke)return window.__TAURI__.core.invoke('analyze_position',{request});const response=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)});const body=await response.json();if(!response.ok)throw new Error(body.error||'KataGo 分析失败');return body.results}
-async function analyzeCurrentPosition(){const token=++analysisRequest;$('engineStatus').className='status';$('engineStatus').innerHTML='<i></i>CUDA 分析中';$('swingText').textContent='正在等待本地 KataGo…';try{const results=await requestAnalysis([currentMove],64);if(token!==analysisRequest)return;results.forEach(result=>analyses.set(result.turnNumber,result));$('engineStatus').innerHTML='<i></i>TensorRT / CUDA';renderAnalysis();drawBoard();drawChart()}catch(error){if(token!==analysisRequest)return;$('engineStatus').className='status error';$('engineStatus').innerHTML='<i></i>引擎不可用';$('swingText').textContent=error.message;showToast(error.message)}}
+async function analyzeCurrentPosition(){const token=++analysisRequest;$('engineStatus').className='status';$('engineStatus').innerHTML='<i></i>CUDA 分析中';$('swingText').textContent='正在等待本地 KataGo…';try{const results=await requestAnalysis([currentMove],settings.positionVisits);if(token!==analysisRequest)return;results.forEach(result=>analyses.set(result.turnNumber,result));$('engineStatus').innerHTML='<i></i>TensorRT / CUDA';renderAnalysis();drawBoard();drawChart()}catch(error){if(token!==analysisRequest)return;$('engineStatus').className='status error';$('engineStatus').innerHTML='<i></i>引擎不可用';$('swingText').textContent=error.message;showToast(error.message)}}
 
 function setMove(value){currentMove=Number(value);update();clearTimeout(setMove.timer);setMove.timer=setTimeout(()=>{if(!analyses.has(currentMove))analyzeCurrentPosition()},180)}
 function togglePlay(){if(playing){clearInterval(playing);playing=null;$('playButton').textContent='▶';return}if(currentMove>=currentGame.moves.length)currentMove=0;$('playButton').textContent='Ⅱ';playing=setInterval(()=>{if(currentMove>=currentGame.moves.length){togglePlay();return}currentMove++;update()},Number($('speedSelect').value))}
@@ -147,16 +204,28 @@ $('importButton').onclick=()=>$('fileInput').click();
 $('fileInput').onchange=async e=>{pendingImports=[];for(const file of e.target.files){try{const parsed=parseSgf(await file.text());pendingImports.push({...parsed,title:parsed.title==='导入的棋谱'?file.name.replace(/\.sgf$/i,''):parsed.title,fileName:file.name,folder:'mine'});}catch(err){showToast(`${file.name}: ${err.message}`)}}if(pendingImports.length)openGameModal('import');e.target.value=''};
 $('editGameButton').onclick=()=>openGameModal('edit');
 $('newFolderButton').onclick=()=>{$('folderNameInput').value='';$('folderModal').classList.remove('hidden');setTimeout(()=>$('folderNameInput').focus(),0)};
-$('gameForm').onsubmit=e=>{e.preventDefault();const title=$('gameNameInput').value.trim(),folder=$('gameFolderSelect').value;if(!title)return;if(modalMode==='import'){const parsed=pendingImports.shift();const game={...parsed,id:Date.now()+Math.random(),title,folder,tag:'新导入',imported:true};delete game.fileName;games.unshift(game);saveLibrary();renderFolders();if(pendingImports.length){openGameModal('import');return}currentGame=game;activeFolder=folder;$('gameModal').classList.add('hidden');renderFolders();selectGame(game.id);showToast('棋谱已导入并保存分类')}else{currentGame.title=title;currentGame.folder=folder;saveLibrary();activeFolder=folder;$('gameModal').classList.add('hidden');renderFolders();renderGames();$('gameTitle').textContent=title;showToast('棋谱名称与分类已保存')}};
+$('gameForm').onsubmit=e=>{e.preventDefault();const title=$('gameNameInput').value.trim(),folder=$('gameFolderSelect').value,tag=$('gameTagSelect').value;if(!title)return;if(modalMode==='import'){const parsed=pendingImports.shift();const game={...parsed,id:Date.now()+Math.random(),title,folder,tag,imported:true,favorite:false};delete game.fileName;games.unshift(game);saveLibrary();renderFolders();if(pendingImports.length){openGameModal('import');return}currentGame=game;activeFolder=folder;$('gameModal').classList.add('hidden');renderFolders();selectGame(game.id);showToast('棋谱已导入并保存分类')}else{currentGame.title=title;currentGame.folder=folder;currentGame.tag=tag;saveLibrary();activeFolder=currentGame.deleted?'trash':folder;$('gameModal').classList.add('hidden');renderFolders();renderGames();$('gameTitle').textContent=title;showToast('棋谱信息已保存')}};
 $('folderForm').onsubmit=e=>{e.preventDefault();const name=$('folderNameInput').value.trim();if(!name)return;if(customFolders.some(folder=>folder.name===name)){showToast('已存在同名文件夹');return}const folder={id:`custom-${Date.now()}`,name};customFolders.push(folder);folderNames[folder.id]=name;saveLibrary();$('folderModal').classList.add('hidden');renderFolders();showToast(`已创建“${name}”`)};
+$('tagForm').onsubmit=e=>{e.preventDefault();const name=$('tagNameInput').value.trim();if(!name)return;if(allTags().includes(name)){showToast('已存在同名标签');return}customTags.push(name);saveLibrary();$('tagModal').classList.add('hidden');renderTags();showToast(`已创建标签“${name}”`)};
+$('newTagButton').onclick=()=>{$('tagNameInput').value='';$('tagModal').classList.remove('hidden');setTimeout(()=>$('tagNameInput').focus(),0)};
+$('deleteGameButton').onclick=()=>{const restoring=currentGame.deleted;currentGame.deleted=!restoring;saveLibrary();$('gameModal').classList.add('hidden');renderFolders();const visible=renderGames();if(visible.length&&!visible.includes(currentGame))selectGame(visible[0].id);showToast(restoring?'棋谱已恢复':'棋谱已移到回收站')};
+$('favoriteButton').onclick=()=>{currentGame.favorite=!currentGame.favorite;saveLibrary();$('favoriteButton').textContent=currentGame.favorite?'★':'☆';$('favoriteButton').classList.toggle('active',currentGame.favorite);renderGames($('searchInput').value);showToast(currentGame.favorite?'已收藏':'已取消收藏')};
+$('filterButton').onclick=()=>{$('resultFilter').value=libraryFilter.result;$('favoriteFilter').checked=libraryFilter.favorites;$('filterModal').classList.remove('hidden')};
+$('filterForm').onsubmit=e=>{e.preventDefault();libraryFilter={result:$('resultFilter').value,favorites:$('favoriteFilter').checked};$('filterModal').classList.add('hidden');$('filterButton').classList.toggle('active',Boolean(libraryFilter.result||libraryFilter.favorites));renderGames($('searchInput').value)};
+$('resetFilterButton').onclick=()=>{libraryFilter={result:'',favorites:false};$('resultFilter').value='';$('favoriteFilter').checked=false;$('filterButton').classList.remove('active');renderGames($('searchInput').value);$('filterModal').classList.add('hidden')};
+$('settingsButton').onclick=()=>{$('positionVisitsInput').value=settings.positionVisits;$('fullVisitsInput').value=settings.fullVisits;$('criticalThresholdInput').value=settings.criticalThreshold;$('settingsModal').classList.remove('hidden')};
+$('settingsForm').onsubmit=e=>{e.preventDefault();settings={positionVisits:Number($('positionVisitsInput').value),fullVisits:Number($('fullVisitsInput').value),criticalThreshold:Number($('criticalThresholdInput').value)};saveLibrary();$('settingsModal').classList.add('hidden');drawChart();showToast('分析设置已保存')};
 document.querySelectorAll('[data-close]').forEach(button=>button.onclick=()=>closeModal(button.dataset.close));
 document.querySelectorAll('.modal-backdrop').forEach(backdrop=>backdrop.onclick=e=>{if(e.target===backdrop)closeModal(backdrop.id)});
 $('moveSlider').oninput=e=>setMove(e.target.value);$('firstButton').onclick=()=>setMove(0);$('prevButton').onclick=()=>setMove(currentMove-1);$('nextButton').onclick=()=>setMove(currentMove+1);$('lastButton').onclick=()=>setMove(currentGame.moves.length);$('playButton').onclick=togglePlay;
 $('speedSelect').onchange=()=>{if(playing){togglePlay();togglePlay()}};
 $('numberToggle').onclick=e=>{showNumbers=!showNumbers;e.currentTarget.classList.toggle('active',showNumbers);drawBoard()};$('heatToggle').onclick=e=>{showHeat=!showHeat;e.currentTarget.classList.toggle('active',showHeat);drawBoard()};$('markButton').onclick=()=>showToast('点击棋盘交叉点添加三角标记');
 boardCanvas.onclick=e=>{const rect=boardCanvas.getBoundingClientRect(),scale=boardCanvas.width/rect.width,step=(boardCanvas.width-86)/18;const x=Math.round((e.offsetX*scale-43)/step),y=Math.round((e.offsetY*scale-43)/step);if(x>=0&&x<19&&y>=0&&y<19){mark={x,y};drawBoard();showToast(`已标记 ${pointName(x,y)}`)}};
-document.querySelectorAll('.tags button').forEach(btn=>btn.onclick=()=>{$('searchInput').value=btn.dataset.tag;renderGames(btn.dataset.tag);document.querySelectorAll('.tags button').forEach(b=>b.classList.remove('active'));btn.classList.add('active')});
-$('analyzeButton').onclick=async()=>{const button=$('analyzeButton'),progress=$('analysisProgress');button.disabled=true;$('analysisLabel').textContent='CUDA 正在分析整局…';$('analysisMeta').textContent='请稍候';progress.className='loading';try{const turns=Array.from({length:currentGame.moves.length+1},(_,i)=>i),results=await requestAnalysis(turns,24);results.forEach(result=>analyses.set(result.turnNumber,result));$('analysisLabel').textContent='全局分析已完成';$('analysisMeta').textContent=`${results.length} / ${turns.length} 手`;button.textContent='重新分析';update();showToast('KataGo 整局分析完成')}catch(error){$('analysisLabel').textContent='分析失败';$('analysisMeta').textContent=error.message;showToast(error.message)}finally{button.disabled=false;progress.className='';progress.style.width=analyses.size?`${analyses.size/(currentGame.moves.length+1)*100}%`:'0'}};
+document.querySelectorAll('.nav-item').forEach(button=>button.onclick=()=>showView(button.dataset.view));
+$('listViewButton').onclick=()=>{listMode='list';$('listViewButton').classList.add('active');$('gridViewButton').classList.remove('active');renderGames($('searchInput').value)};
+$('gridViewButton').onclick=()=>{listMode='grid';$('gridViewButton').classList.add('active');$('listViewButton').classList.remove('active');renderGames($('searchInput').value)};
+document.querySelectorAll('.chart-tabs button').forEach(button=>button.onclick=()=>{chartMode=button.dataset.chart;document.querySelectorAll('.chart-tabs button').forEach(item=>item.classList.toggle('active',item===button));$('chartTitle').textContent=chartMode==='winrate'?'胜率走势':'目差走势';$('chartLegend').innerHTML=`<i class="legend-black"></i>${chartMode==='winrate'?'黑棋胜率':'黑棋目差'}`;drawChart()});
+$('analyzeButton').onclick=async()=>{const button=$('analyzeButton'),progress=$('analysisProgress'),task=addAnalysisTask('running',`共 ${currentGame.moves.length+1} 个局面`);button.disabled=true;$('analysisLabel').textContent='CUDA 正在分析整局…';$('analysisMeta').textContent='请稍候';progress.className='loading';try{const turns=Array.from({length:currentGame.moves.length+1},(_,i)=>i),results=await requestAnalysis(turns,settings.fullVisits);results.forEach(result=>analyses.set(result.turnNumber,result));task.status='done';task.detail=`已完成 ${results.length} 个局面 · 每手 ${settings.fullVisits} visits`;$('analysisLabel').textContent='全局分析已完成';$('analysisMeta').textContent=`${results.length} / ${turns.length} 手`;button.textContent='重新分析';update();showToast('KataGo 整局分析完成')}catch(error){task.status='failed';task.detail=error.message;$('analysisLabel').textContent='分析失败';$('analysisMeta').textContent=error.message;showToast(error.message)}finally{button.disabled=false;progress.className='';progress.style.width=analyses.size?`${analyses.size/(currentGame.moves.length+1)*100}%`:'0';$('taskCount').textContent=analysisTasks.filter(item=>item.status==='running').length;saveLibrary();if(currentView==='tasks')renderFeatureView()}};
 document.addEventListener('keydown',e=>{if(e.target.matches('input,textarea'))return;if(e.key==='ArrowLeft')setMove(currentMove-1);if(e.key==='ArrowRight')setMove(currentMove+1);if(e.key===' ') {e.preventDefault();togglePlay()}});
 
-renderFolders();renderGames();update();analyzeCurrentPosition();
+renderFolders();renderTags();$('taskCount').textContent=analysisTasks.filter(item=>item.status==='running').length;renderGames();update();analyzeCurrentPosition();
