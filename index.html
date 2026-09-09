@@ -23,11 +23,11 @@
 
       <div class="section-title"><span>棋谱</span><button title="新建文件夹">＋</button></div>
       <div class="folder-list">
-        <button class="folder active"><span>◉</span>全部棋谱<b>24</b></button>
-        <button class="folder"><span>◇</span>最近复盘<b>6</b></button>
-        <button class="folder"><span>□</span>我的对局<b>12</b></button>
-        <button class="folder"><span>□</span>职业棋谱<b>8</b></button>
-        <button class="folder muted"><span>⌫</span>回收站<b>2</b></button>
+        <button class="folder active" data-folder="all"><span>◉</span>全部棋谱<b>6</b></button>
+        <button class="folder" data-folder="recent"><span>◇</span>最近复盘<b>3</b></button>
+        <button class="folder" data-folder="mine"><span>□</span>我的对局<b>6</b></button>
+        <button class="folder" data-folder="professional"><span>□</span>职业棋谱<b>2</b></button>
+        <button class="folder muted" data-folder="trash"><span>⌫</span>回收站<b>0</b></button>
       </div>
 
       <div class="section-title"><span>标签</span><button title="新建标签">＋</button></div>
@@ -57,7 +57,7 @@
       <section class="content">
         <div class="library-panel">
           <div class="panel-heading">
-            <div><h1>全部棋谱</h1><p><span id="gameCount">24</span> 局棋谱 · 最近更新于今天</p></div>
+            <div><h1 id="panelTitle">全部棋谱</h1><p><span id="gameCount">6</span> 局棋谱 · 最近更新于今天</p></div>
             <div class="view-actions"><button title="筛选">☷</button><button class="active" title="列表视图">☰</button><button title="网格视图">▦</button></div>
           </div>
           <div class="game-list" id="gameList"></div>
@@ -65,7 +65,7 @@
 
         <section class="review-panel">
           <div class="game-header">
-            <div class="breadcrumb"><span>全部棋谱</span><b>›</b><strong id="gameTitle">秋季升段赛 · 第 3 轮</strong></div>
+            <div class="breadcrumb"><span id="breadcrumbFolder">全部棋谱</span><b>›</b><strong id="gameTitle">秋季升段赛 · 第 3 轮</strong></div>
             <div class="game-actions"><button title="收藏">☆</button><button title="更多">•••</button></div>
           </div>
 
@@ -98,7 +98,7 @@
             </div>
 
             <aside class="analysis-panel">
-              <div class="analysis-tabs"><button class="active" data-tab="ai">AI 分析</button><button data-tab="info">棋局信息</button></div>
+              <div class="analysis-tabs"><strong>AI 分析</strong></div>
               <div id="aiTab" class="tab-content">
                 <div class="evaluation">
                   <div class="eval-top"><span>局面评估 · 第 <b id="evalMove">38</b> 手</span><em class="status" id="engineStatus"><i></i>连接 KataGo</em></div>
@@ -118,7 +118,6 @@
                   <button id="analyzeButton">分析整局</button>
                 </div>
               </div>
-              <div id="infoTab" class="tab-content hidden"><dl class="game-info"><dt>赛事</dt><dd>秋季升段赛</dd><dt>日期</dt><dd>2026-08-24</dd><dt>地点</dt><dd>杭州棋院</dd><dt>规则</dt><dd>中国规则</dd><dt>结果</dt><dd>白中盘胜</dd></dl></div>
             </aside>
           </div>
 

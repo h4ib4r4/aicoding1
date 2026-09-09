@@ -27,6 +27,9 @@ let showHeat = true;
 let mark = null;
 let analyses = new Map();
 let analysisRequest = 0;
+let activeFolder = 'all';
+
+const folderNames = { all: '全部棋谱', recent: '最近复盘', mine: '我的对局', professional: '职业棋谱', trash: '回收站' };
 
 const $ = id => document.getElementById(id);
 const boardCanvas = $('goBoard');
@@ -41,13 +44,21 @@ function showToast(message) {
 
 function renderGames(filter = '') {
   const query = filter.trim().toLowerCase();
-  const visible = games.filter(g => [g.title,g.black,g.white,g.event,g.tag].join(' ').toLowerCase().includes(query));
+  const folderMatch = (game, index) => activeFolder === 'all'
+    || (activeFolder === 'recent' && index < 3)
+    || (activeFolder === 'mine' && (game.black === '林野' || game.white === '林野'))
+    || (activeFolder === 'professional' && `${game.blackRank} ${game.whiteRank}`.includes('职业'))
+    || (activeFolder === 'trash' && game.deleted);
+  const visible = games.filter((g, index) => folderMatch(g, index) && [g.title,g.black,g.white,g.event,g.tag].join(' ').toLowerCase().includes(query));
   $('gameCount').textContent = visible.length;
+  $('panelTitle').textContent = folderNames[activeFolder];
+  $('breadcrumbFolder').textContent = folderNames[activeFolder];
   $('gameList').innerHTML = visible.map(g => `<article class="game-card ${g.id===currentGame.id?'active':''}" data-id="${g.id}">
     <div class="date"><span>${g.date}</span><em>${g.tag}</em></div><h3>${g.title}</h3>
     <div class="matchup"><i class="mini-stone"></i><span>${g.black}</span><b>vs</b><i class="mini-stone white"></i><span>${g.white}</span></div>
     <div class="meta"><span>${g.event}</span><span>${g.result}</span></div></article>`).join('') || '<p style="padding:30px;color:#999;text-align:center">没有找到匹配的棋谱</p>';
   document.querySelectorAll('.game-card').forEach(card => card.onclick = () => selectGame(Number(card.dataset.id)));
+  return visible;
 }
 
 function selectGame(id) {
@@ -95,7 +106,7 @@ $('moveSlider').oninput=e=>setMove(e.target.value);$('firstButton').onclick=()=>
 $('speedSelect').onchange=()=>{if(playing){togglePlay();togglePlay()}};
 $('numberToggle').onclick=e=>{showNumbers=!showNumbers;e.currentTarget.classList.toggle('active',showNumbers);drawBoard()};$('heatToggle').onclick=e=>{showHeat=!showHeat;e.currentTarget.classList.toggle('active',showHeat);drawBoard()};$('markButton').onclick=()=>showToast('点击棋盘交叉点添加三角标记');
 boardCanvas.onclick=e=>{const rect=boardCanvas.getBoundingClientRect(),scale=boardCanvas.width/rect.width,step=(boardCanvas.width-86)/18;const x=Math.round((e.offsetX*scale-43)/step),y=Math.round((e.offsetY*scale-43)/step);if(x>=0&&x<19&&y>=0&&y<19){mark={x,y};drawBoard();showToast(`已标记 ${pointName(x,y)}`)}};
-document.querySelectorAll('.analysis-tabs button').forEach(btn=>btn.onclick=()=>{document.querySelectorAll('.analysis-tabs button').forEach(b=>b.classList.remove('active'));btn.classList.add('active');['ai','info'].forEach(t=>$(t+'Tab').classList.toggle('hidden',btn.dataset.tab!==t))});
+document.querySelectorAll('.folder').forEach(button=>button.onclick=()=>{activeFolder=button.dataset.folder;document.querySelectorAll('.folder').forEach(item=>item.classList.toggle('active',item===button));document.querySelectorAll('.tags button').forEach(item=>item.classList.remove('active'));$('searchInput').value='';const visible=renderGames();if(visible.length&&!visible.some(game=>game.id===currentGame.id))selectGame(visible[0].id)});
 document.querySelectorAll('.tags button').forEach(btn=>btn.onclick=()=>{$('searchInput').value=btn.dataset.tag;renderGames(btn.dataset.tag);document.querySelectorAll('.tags button').forEach(b=>b.classList.remove('active'));btn.classList.add('active')});
 $('analyzeButton').onclick=async()=>{const button=$('analyzeButton'),progress=$('analysisProgress');button.disabled=true;$('analysisLabel').textContent='CUDA 正在分析整局…';$('analysisMeta').textContent='请稍候';progress.className='loading';try{const turns=Array.from({length:currentGame.moves.length+1},(_,i)=>i),results=await requestAnalysis(turns,24);results.forEach(result=>analyses.set(result.turnNumber,result));$('analysisLabel').textContent='全局分析已完成';$('analysisMeta').textContent=`${results.length} / ${turns.length} 手`;button.textContent='重新分析';update();showToast('KataGo 整局分析完成')}catch(error){$('analysisLabel').textContent='分析失败';$('analysisMeta').textContent=error.message;showToast(error.message)}finally{button.disabled=false;progress.className='';progress.style.width=analyses.size?`${analyses.size/(currentGame.moves.length+1)*100}%`:'0'}};
 document.addEventListener('keydown',e=>{if(e.target.matches('input,textarea'))return;if(e.key==='ArrowLeft')setMove(currentMove-1);if(e.key==='ArrowRight')setMove(currentMove+1);if(e.key===' ') {e.preventDefault();togglePlay()}});
