@@ -19,7 +19,7 @@ const demoGames = [
   {id:6,title:'让先指导棋',folder:'professional',black:'林野',blackRank:'6段',white:'沈老师',whiteRank:'职业二段',date:'2026.07.21',event:'指导棋',result:'白胜 8.5目',tag:'待复盘',moves:baseMoves.slice(0,51)}
 ];
 
-function loadLocal(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch { return fallback; } }
+function loadLocal(key, fallback) { try { const value = JSON.parse(localStorage.getItem(key)); return value === null || value === undefined ? fallback : value; } catch { return fallback; } }
 const games = loadLocal('yijing.games', demoGames);
 const customFolders = loadLocal('yijing.folders', []);
 const customTags = loadLocal('yijing.tags', []);
@@ -219,6 +219,13 @@ $('searchInput').addEventListener('input',e=>renderGames(e.target.value));
 $('importButton').onclick=()=>$('fileInput').click();
 $('fileInput').onchange=async e=>{pendingImports=[];for(const file of e.target.files){try{const parsed=parseSgf(await file.text());pendingImports.push({...parsed,title:parsed.title==='导入的棋谱'?file.name.replace(/\.sgf$/i,''):parsed.title,fileName:file.name,folder:'mine'});}catch(err){showToast(`${file.name}: ${err.message}`)}}if(pendingImports.length)openGameModal('import');e.target.value=''};
 $('editGameButton').onclick=()=>openGameModal('edit');
+$('exportButton').onclick=()=>{
+  const esc=value=>String(value||'').replace(/\\/g,'\\\\').replace(/\]/g,'\\]').replace(/\[/g,'\\[').replace(/\r?\n/g,'\\n');
+  const g=currentGame; const props=[['GM','1'],['FF','4'],['CA','UTF-8'],['GN',g.title],['PB',g.black],['PW',g.white],['BR',g.blackRank],['WR',g.whiteRank],['EV',g.event],['DT',g.date],['RE',g.result]].filter(([,v])=>v);
+  const body=props.map(([k,v])=>`${k}[${esc(v)}]`).join('');
+  const moves=g.moves.map(move=>move.pass?`;${move.color}[]`:`;${move.color}[${String.fromCharCode(97+move.x)}${String.fromCharCode(97+move.y)}]`).join('');
+  const blob=new Blob([`(;${body}${moves})`],{type:'application/x-go-sgf'}); const url=URL.createObjectURL(blob); const link=document.createElement('a'); link.href=url; link.download=`${(g.title||'yijing-game').replace(/[\\/:*?"<>|]/g,'_')}.sgf`; link.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); showToast('SGF 已导出');
+};
 $('newFolderButton').onclick=()=>{$('folderNameInput').value='';$('folderModal').classList.remove('hidden');setTimeout(()=>$('folderNameInput').focus(),0)};
 $('gameForm').onsubmit=e=>{e.preventDefault();const title=$('gameNameInput').value.trim(),folder=$('gameFolderSelect').value,tag=$('gameTagSelect').value;if(!title)return;if(modalMode==='import'){const parsed=pendingImports.shift();const game={...parsed,id:Date.now()+Math.random(),title,folder,tag,imported:true,favorite:false};delete game.fileName;games.unshift(game);saveLibrary();renderFolders();if(pendingImports.length){openGameModal('import');return}currentGame=game;activeFolder=folder;$('gameModal').classList.add('hidden');renderFolders();selectGame(game.id);showToast('棋谱已导入并保存分类')}else{currentGame.title=title;currentGame.folder=folder;currentGame.tag=tag;saveLibrary();activeFolder=currentGame.deleted?'trash':folder;$('gameModal').classList.add('hidden');renderFolders();renderGames();$('gameTitle').textContent=title;showToast('棋谱信息已保存')}};
 $('folderForm').onsubmit=e=>{e.preventDefault();const name=$('folderNameInput').value.trim();if(!name)return;if(customFolders.some(folder=>folder.name===name)){showToast('已存在同名文件夹');return}const folder={id:`custom-${Date.now()}`,name};customFolders.push(folder);folderNames[folder.id]=name;saveLibrary();$('folderModal').classList.add('hidden');renderFolders();showToast(`已创建“${name}”`)};
