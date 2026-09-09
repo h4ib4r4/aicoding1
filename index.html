@@ -21,8 +21,8 @@
         <button class="nav-item"><span>⌁</span>数据统计</button>
       </nav>
 
-      <div class="section-title"><span>棋谱</span><button title="新建文件夹">＋</button></div>
-      <div class="folder-list">
+      <div class="section-title"><span>棋谱</span><button id="newFolderButton" title="新建文件夹">＋</button></div>
+      <div class="folder-list" id="folderList">
         <button class="folder active" data-folder="all"><span>◉</span>全部棋谱<b>6</b></button>
         <button class="folder" data-folder="recent"><span>◇</span>最近复盘<b>3</b></button>
         <button class="folder" data-folder="mine"><span>□</span>我的对局<b>6</b></button>
@@ -66,7 +66,7 @@
         <section class="review-panel">
           <div class="game-header">
             <div class="breadcrumb"><span id="breadcrumbFolder">全部棋谱</span><b>›</b><strong id="gameTitle">秋季升段赛 · 第 3 轮</strong></div>
-            <div class="game-actions"><button title="收藏">☆</button><button title="更多">•••</button></div>
+            <div class="game-actions"><button title="收藏">☆</button><button id="editGameButton" title="重命名与分类">•••</button></div>
           </div>
 
           <div class="review-body">
@@ -131,6 +131,22 @@
   </div>
 
   <div id="toast" class="toast" role="status"></div>
+  <div id="gameModal" class="modal-backdrop hidden">
+    <form class="modal" id="gameForm">
+      <div class="modal-heading"><div><small id="gameModalStep">棋谱属性</small><h2 id="gameModalTitle">编辑棋谱</h2></div><button type="button" class="modal-close" data-close="gameModal">×</button></div>
+      <label>棋谱名称<input id="gameNameInput" maxlength="80" required></label>
+      <label>归属文件夹<select id="gameFolderSelect"></select></label>
+      <p class="modal-hint" id="gameModalHint">名称和分类仅保存在本机，可随时再次修改。</p>
+      <div class="modal-actions"><button type="button" class="secondary-btn" data-close="gameModal">取消</button><button type="submit" class="primary-btn" id="gameSaveButton">保存</button></div>
+    </form>
+  </div>
+  <div id="folderModal" class="modal-backdrop hidden">
+    <form class="modal compact" id="folderForm">
+      <div class="modal-heading"><div><small>棋谱分类</small><h2>新建文件夹</h2></div><button type="button" class="modal-close" data-close="folderModal">×</button></div>
+      <label>文件夹名称<input id="folderNameInput" maxlength="20" placeholder="例如：定式研究" required></label>
+      <div class="modal-actions"><button type="button" class="secondary-btn" data-close="folderModal">取消</button><button type="submit" class="primary-btn">创建</button></div>
+    </form>
+  </div>
   <script src="core.js"></script>
   <script src="app.js"></script>
 </body>

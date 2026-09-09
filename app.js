@@ -10,14 +10,18 @@ const baseMoves = [
   [12,17],[9,17]
 ].map(([x,y], i) => ({ x, y, color: i % 2 ? 'W' : 'B' }));
 
-const games = [
-  {id:1,title:'秋季升段赛 · 第 3 轮',black:'林野',blackRank:'7段',white:'陈星',whiteRank:'6段',date:'2026.08.24',event:'秋季升段赛',result:'白中盘胜',tag:'关键对局',moves:baseMoves},
-  {id:2,title:'周末训练局 · 星位攻防',black:'林野',blackRank:'7段',white:'周屿',whiteRank:'7段',date:'2026.08.20',event:'训练对局',result:'黑胜 3.5目',tag:'布局研究',moves:baseMoves.slice(0,54).map((m,i)=>({...m,x:(m.x+(i>28?1:0))%19}))},
-  {id:3,title:'城市联赛 · 半决赛',black:'顾言',blackRank:'职业初段',white:'林野',whiteRank:'7段',date:'2026.08.12',event:'城市联赛',result:'黑中盘胜',tag:'待复盘',moves:baseMoves.slice(0,48)},
-  {id:4,title:'小目低挂定式研究',black:'林野',blackRank:'7段',white:'AI',whiteRank:'九段',date:'2026.08.08',event:'AI 训练',result:'白胜 5.5目',tag:'布局研究',moves:baseMoves.slice(0,44)},
-  {id:5,title:'夏季棋友会 · 第 5 局',black:'唐宁',blackRank:'6段',white:'林野',whiteRank:'7段',date:'2026.07.30',event:'夏季棋友会',result:'白中盘胜',tag:'关键对局',moves:baseMoves.slice(0,58)},
-  {id:6,title:'让先指导棋',black:'林野',blackRank:'6段',white:'沈老师',whiteRank:'职业二段',date:'2026.07.21',event:'指导棋',result:'白胜 8.5目',tag:'待复盘',moves:baseMoves.slice(0,51)}
+const demoGames = [
+  {id:1,title:'秋季升段赛 · 第 3 轮',folder:'mine',black:'林野',blackRank:'7段',white:'陈星',whiteRank:'6段',date:'2026.08.24',event:'秋季升段赛',result:'白中盘胜',tag:'关键对局',moves:baseMoves},
+  {id:2,title:'周末训练局 · 星位攻防',folder:'mine',black:'林野',blackRank:'7段',white:'周屿',whiteRank:'7段',date:'2026.08.20',event:'训练对局',result:'黑胜 3.5目',tag:'布局研究',moves:baseMoves.slice(0,54).map((m,i)=>({...m,x:(m.x+(i>28?1:0))%19}))},
+  {id:3,title:'城市联赛 · 半决赛',folder:'professional',black:'顾言',blackRank:'职业初段',white:'林野',whiteRank:'7段',date:'2026.08.12',event:'城市联赛',result:'黑中盘胜',tag:'待复盘',moves:baseMoves.slice(0,48)},
+  {id:4,title:'小目低挂定式研究',folder:'mine',black:'林野',blackRank:'7段',white:'AI',whiteRank:'九段',date:'2026.08.08',event:'AI 训练',result:'白胜 5.5目',tag:'布局研究',moves:baseMoves.slice(0,44)},
+  {id:5,title:'夏季棋友会 · 第 5 局',folder:'mine',black:'唐宁',blackRank:'6段',white:'林野',whiteRank:'7段',date:'2026.07.30',event:'夏季棋友会',result:'白中盘胜',tag:'关键对局',moves:baseMoves.slice(0,58)},
+  {id:6,title:'让先指导棋',folder:'professional',black:'林野',blackRank:'6段',white:'沈老师',whiteRank:'职业二段',date:'2026.07.21',event:'指导棋',result:'白胜 8.5目',tag:'待复盘',moves:baseMoves.slice(0,51)}
 ];
+
+function loadLocal(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch { return fallback; } }
+const games = loadLocal('yijing.games', demoGames);
+const customFolders = loadLocal('yijing.folders', []);
 
 let currentGame = games[0];
 let currentMove = 38;
@@ -30,12 +34,50 @@ let analysisRequest = 0;
 let activeFolder = 'all';
 
 const folderNames = { all: '全部棋谱', recent: '最近复盘', mine: '我的对局', professional: '职业棋谱', trash: '回收站' };
+let pendingImports = [];
+let modalMode = 'edit';
 
 const $ = id => document.getElementById(id);
 const boardCanvas = $('goBoard');
 const boardCtx = boardCanvas.getContext('2d');
 const chartCanvas = $('winChart');
 const chartCtx = chartCanvas.getContext('2d');
+
+function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char])); }
+function saveLibrary() { try { localStorage.setItem('yijing.games', JSON.stringify(games)); localStorage.setItem('yijing.folders', JSON.stringify(customFolders)); return true; } catch { showToast('本地存储空间不足，修改仅在本次打开期间有效'); return false; } }
+function folderOptions(selected = 'mine') { return [{id:'mine',name:'我的对局'},{id:'professional',name:'职业棋谱'},...customFolders].map(folder=>`<option value="${escapeHtml(folder.id)}" ${folder.id===selected?'selected':''}>${escapeHtml(folder.name)}</option>`).join(''); }
+
+function renderFolders() {
+  const items = [
+    {id:'all',name:'全部棋谱',icon:'◉',count:games.filter(g=>!g.deleted).length},
+    {id:'recent',name:'最近复盘',icon:'◇',count:Math.min(3,games.filter(g=>!g.deleted).length)},
+    {id:'mine',name:'我的对局',icon:'□',count:games.filter(g=>g.folder==='mine'&&!g.deleted).length},
+    {id:'professional',name:'职业棋谱',icon:'□',count:games.filter(g=>g.folder==='professional'&&!g.deleted).length},
+    ...customFolders.map(folder=>({...folder,icon:'□',count:games.filter(g=>g.folder===folder.id&&!g.deleted).length})),
+    {id:'trash',name:'回收站',icon:'⌫',count:games.filter(g=>g.deleted).length,muted:true}
+  ];
+  items.forEach(item=>{folderNames[item.id]=item.name});
+  $('folderList').innerHTML=items.map(item=>`<button class="folder ${item.id===activeFolder?'active':''} ${item.muted?'muted':''}" data-folder="${escapeHtml(item.id)}"><span>${item.icon}</span>${escapeHtml(item.name)}<b>${item.count}</b></button>`).join('');
+  document.querySelectorAll('.folder').forEach(button=>button.onclick=()=>selectFolder(button.dataset.folder));
+}
+
+function selectFolder(folder) { activeFolder=folder;document.querySelectorAll('.tags button').forEach(item=>item.classList.remove('active'));$('searchInput').value='';renderFolders();const visible=renderGames();if(visible.length&&!visible.some(game=>game.id===currentGame.id))selectGame(visible[0].id); }
+
+function openGameModal(mode, game = currentGame) {
+  modalMode = mode;
+  const importing = mode === 'import';
+  const source = importing ? pendingImports[0] : game;
+  $('gameModalTitle').textContent = importing ? '确认导入信息' : '重命名与分类';
+  $('gameModalStep').textContent = importing ? `待导入 ${pendingImports.length} 局` : `${game.black} vs ${game.white}`;
+  $('gameNameInput').value = source.title;
+  $('gameFolderSelect').innerHTML = folderOptions(source.folder || 'mine');
+  $('gameModalHint').textContent = importing ? `来源：${source.fileName}` : '名称和分类仅保存在本机，可随时再次修改。';
+  $('gameSaveButton').textContent = importing ? (pendingImports.length > 1 ? '保存并继续' : '完成导入') : '保存';
+  $('gameModal').classList.remove('hidden');
+  setTimeout(()=>$('gameNameInput').select(),0);
+}
+
+function closeModal(id) { $(id).classList.add('hidden'); if(id==='gameModal'&&modalMode==='import') pendingImports=[]; }
 
 function showToast(message) {
   const toast = $('toast'); toast.textContent = message; toast.classList.add('show');
@@ -44,19 +86,20 @@ function showToast(message) {
 
 function renderGames(filter = '') {
   const query = filter.trim().toLowerCase();
-  const folderMatch = (game, index) => activeFolder === 'all'
-    || (activeFolder === 'recent' && index < 3)
-    || (activeFolder === 'mine' && (game.black === '林野' || game.white === '林野'))
-    || (activeFolder === 'professional' && `${game.blackRank} ${game.whiteRank}`.includes('职业'))
-    || (activeFolder === 'trash' && game.deleted);
+  const activeGames = games.filter(game => !game.deleted);
+  const recentIds = new Set(activeGames.slice(0, 3).map(game => game.id));
+  const folderMatch = game => (activeFolder === 'all' && !game.deleted)
+    || (activeFolder === 'recent' && !game.deleted && recentIds.has(game.id))
+    || (activeFolder === 'trash' && game.deleted)
+    || (!['all','recent','trash'].includes(activeFolder) && !game.deleted && game.folder === activeFolder);
   const visible = games.filter((g, index) => folderMatch(g, index) && [g.title,g.black,g.white,g.event,g.tag].join(' ').toLowerCase().includes(query));
   $('gameCount').textContent = visible.length;
-  $('panelTitle').textContent = folderNames[activeFolder];
-  $('breadcrumbFolder').textContent = folderNames[activeFolder];
+  $('panelTitle').textContent = folderNames[activeFolder] || '棋谱';
+  $('breadcrumbFolder').textContent = folderNames[activeFolder] || '棋谱';
   $('gameList').innerHTML = visible.map(g => `<article class="game-card ${g.id===currentGame.id?'active':''}" data-id="${g.id}">
-    <div class="date"><span>${g.date}</span><em>${g.tag}</em></div><h3>${g.title}</h3>
-    <div class="matchup"><i class="mini-stone"></i><span>${g.black}</span><b>vs</b><i class="mini-stone white"></i><span>${g.white}</span></div>
-    <div class="meta"><span>${g.event}</span><span>${g.result}</span></div></article>`).join('') || '<p style="padding:30px;color:#999;text-align:center">没有找到匹配的棋谱</p>';
+    <div class="date"><span>${escapeHtml(g.date)}</span><em>${escapeHtml(g.tag)}</em></div><h3>${escapeHtml(g.title)}</h3>
+    <div class="matchup"><i class="mini-stone"></i><span>${escapeHtml(g.black)}</span><b>vs</b><i class="mini-stone white"></i><span>${escapeHtml(g.white)}</span></div>
+    <div class="meta"><span>${escapeHtml(g.event)}</span><span>${escapeHtml(g.result)}</span></div></article>`).join('') || '<p style="padding:30px;color:#999;text-align:center">此文件夹中还没有棋谱</p>';
   document.querySelectorAll('.game-card').forEach(card => card.onclick = () => selectGame(Number(card.dataset.id)));
   return visible;
 }
@@ -101,14 +144,19 @@ function togglePlay(){if(playing){clearInterval(playing);playing=null;$('playBut
 
 $('searchInput').addEventListener('input',e=>renderGames(e.target.value));
 $('importButton').onclick=()=>$('fileInput').click();
-$('fileInput').onchange=async e=>{for(const file of e.target.files){try{const parsed=parseSgf(await file.text());games.unshift({id:Date.now()+Math.random(),tag:'新导入',...parsed,title:parsed.title||file.name});}catch(err){showToast(`${file.name}: ${err.message}`)}}renderGames();if(e.target.files.length){selectGame(games[0].id);showToast(`已导入 ${e.target.files.length} 个 SGF 文件`)}e.target.value=''};
+$('fileInput').onchange=async e=>{pendingImports=[];for(const file of e.target.files){try{const parsed=parseSgf(await file.text());pendingImports.push({...parsed,title:parsed.title==='导入的棋谱'?file.name.replace(/\.sgf$/i,''):parsed.title,fileName:file.name,folder:'mine'});}catch(err){showToast(`${file.name}: ${err.message}`)}}if(pendingImports.length)openGameModal('import');e.target.value=''};
+$('editGameButton').onclick=()=>openGameModal('edit');
+$('newFolderButton').onclick=()=>{$('folderNameInput').value='';$('folderModal').classList.remove('hidden');setTimeout(()=>$('folderNameInput').focus(),0)};
+$('gameForm').onsubmit=e=>{e.preventDefault();const title=$('gameNameInput').value.trim(),folder=$('gameFolderSelect').value;if(!title)return;if(modalMode==='import'){const parsed=pendingImports.shift();const game={...parsed,id:Date.now()+Math.random(),title,folder,tag:'新导入',imported:true};delete game.fileName;games.unshift(game);saveLibrary();renderFolders();if(pendingImports.length){openGameModal('import');return}currentGame=game;activeFolder=folder;$('gameModal').classList.add('hidden');renderFolders();selectGame(game.id);showToast('棋谱已导入并保存分类')}else{currentGame.title=title;currentGame.folder=folder;saveLibrary();activeFolder=folder;$('gameModal').classList.add('hidden');renderFolders();renderGames();$('gameTitle').textContent=title;showToast('棋谱名称与分类已保存')}};
+$('folderForm').onsubmit=e=>{e.preventDefault();const name=$('folderNameInput').value.trim();if(!name)return;if(customFolders.some(folder=>folder.name===name)){showToast('已存在同名文件夹');return}const folder={id:`custom-${Date.now()}`,name};customFolders.push(folder);folderNames[folder.id]=name;saveLibrary();$('folderModal').classList.add('hidden');renderFolders();showToast(`已创建“${name}”`)};
+document.querySelectorAll('[data-close]').forEach(button=>button.onclick=()=>closeModal(button.dataset.close));
+document.querySelectorAll('.modal-backdrop').forEach(backdrop=>backdrop.onclick=e=>{if(e.target===backdrop)closeModal(backdrop.id)});
 $('moveSlider').oninput=e=>setMove(e.target.value);$('firstButton').onclick=()=>setMove(0);$('prevButton').onclick=()=>setMove(currentMove-1);$('nextButton').onclick=()=>setMove(currentMove+1);$('lastButton').onclick=()=>setMove(currentGame.moves.length);$('playButton').onclick=togglePlay;
 $('speedSelect').onchange=()=>{if(playing){togglePlay();togglePlay()}};
 $('numberToggle').onclick=e=>{showNumbers=!showNumbers;e.currentTarget.classList.toggle('active',showNumbers);drawBoard()};$('heatToggle').onclick=e=>{showHeat=!showHeat;e.currentTarget.classList.toggle('active',showHeat);drawBoard()};$('markButton').onclick=()=>showToast('点击棋盘交叉点添加三角标记');
 boardCanvas.onclick=e=>{const rect=boardCanvas.getBoundingClientRect(),scale=boardCanvas.width/rect.width,step=(boardCanvas.width-86)/18;const x=Math.round((e.offsetX*scale-43)/step),y=Math.round((e.offsetY*scale-43)/step);if(x>=0&&x<19&&y>=0&&y<19){mark={x,y};drawBoard();showToast(`已标记 ${pointName(x,y)}`)}};
-document.querySelectorAll('.folder').forEach(button=>button.onclick=()=>{activeFolder=button.dataset.folder;document.querySelectorAll('.folder').forEach(item=>item.classList.toggle('active',item===button));document.querySelectorAll('.tags button').forEach(item=>item.classList.remove('active'));$('searchInput').value='';const visible=renderGames();if(visible.length&&!visible.some(game=>game.id===currentGame.id))selectGame(visible[0].id)});
 document.querySelectorAll('.tags button').forEach(btn=>btn.onclick=()=>{$('searchInput').value=btn.dataset.tag;renderGames(btn.dataset.tag);document.querySelectorAll('.tags button').forEach(b=>b.classList.remove('active'));btn.classList.add('active')});
 $('analyzeButton').onclick=async()=>{const button=$('analyzeButton'),progress=$('analysisProgress');button.disabled=true;$('analysisLabel').textContent='CUDA 正在分析整局…';$('analysisMeta').textContent='请稍候';progress.className='loading';try{const turns=Array.from({length:currentGame.moves.length+1},(_,i)=>i),results=await requestAnalysis(turns,24);results.forEach(result=>analyses.set(result.turnNumber,result));$('analysisLabel').textContent='全局分析已完成';$('analysisMeta').textContent=`${results.length} / ${turns.length} 手`;button.textContent='重新分析';update();showToast('KataGo 整局分析完成')}catch(error){$('analysisLabel').textContent='分析失败';$('analysisMeta').textContent=error.message;showToast(error.message)}finally{button.disabled=false;progress.className='';progress.style.width=analyses.size?`${analyses.size/(currentGame.moves.length+1)*100}%`:'0'}};
 document.addEventListener('keydown',e=>{if(e.target.matches('input,textarea'))return;if(e.key==='ArrowLeft')setMove(currentMove-1);if(e.key==='ArrowRight')setMove(currentMove+1);if(e.key===' ') {e.preventDefault();togglePlay()}});
 
-renderGames();update();analyzeCurrentPosition();
+renderFolders();renderGames();update();analyzeCurrentPosition();
