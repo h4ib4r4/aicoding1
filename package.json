@@ -5,6 +5,13 @@
   "description": "围棋棋谱管理与 AI 复盘工具交互 Demo",
   "scripts": {
     "test": "node --test",
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "vite --host 127.0.0.1 --port 1420",
+    "build": "vite build",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.5",
+    "vite": "^7.1.5"
   }
 }

@@ -17,3 +17,19 @@ npm test
 ```
 
 Demo 默认连接本机 `G:\Edge_download\KataGo` 下的 TensorRT / CUDA KataGo。需要使用其他安装位置时，可设置 `KATAGO_EXE`、`KATAGO_MODEL`、`KATAGO_CONFIG` 和 `KATAGO_DATA_DIR` 环境变量。
+
+## Tauri 桌面版
+
+正式版桌面壳位于 `src-tauri`，使用 Rust、SQLite/FTS5 和 Tauri 2。开发运行：
+
+```powershell
+npm run tauri dev
+```
+
+生成 Windows 可执行文件：
+
+```powershell
+npm run tauri -- build --debug --no-bundle
+```
+
+桌面后端已经提供棋谱查询、SGF 去重导入、自定义文件夹、重命名/移动分类以及 KataGo 分析命令。浏览器模式仍由 `npm start` 提供，便于快速调试界面。
