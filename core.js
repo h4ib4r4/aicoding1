@@ -61,6 +61,20 @@
     return board;
   }
 
+  function capturedStones(moves, count, size = BOARD_SIZE) {
+    if (!Number.isInteger(count) || count <= 0 || count > moves.length) return 0;
+    const before = replay(moves, count - 1, size);
+    const move = moves[count - 1];
+    const after = applyMove(before, move);
+    if (!after || !move || move.pass) return 0;
+    const opponent = move.color === 'B' ? 'W' : 'B';
+    let captured = 0;
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      if (before[y][x] === opponent && !after[y][x]) captured++;
+    }
+    return captured;
+  }
+
   function sgfPoint(value) {
     if (!value || value.length < 2) return { pass: true };
     return { x: value.charCodeAt(0) - 97, y: value.charCodeAt(1) - 97 };
@@ -97,5 +111,5 @@
     return x < 0 || y < 0 || y >= size ? null : { x, y };
   }
 
-  return { BOARD_SIZE, emptyBoard, neighbors, groupAt, applyMove, replay, parseSgf, pointName, gtpPointToCoords };
+  return { BOARD_SIZE, emptyBoard, neighbors, groupAt, applyMove, replay, capturedStones, parseSgf, pointName, gtpPointToCoords };
 });

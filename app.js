@@ -1,4 +1,4 @@
-const { replay, parseSgf, pointName, gtpPointToCoords } = window.YijingCore;
+const { replay, capturedStones, parseSgf, pointName, gtpPointToCoords } = window.YijingCore;
 
 const baseMoves = [
   [3,15],[15,3],[15,15],[3,3],[5,2],[2,5],[16,6],[16,10],[13,16],[10,16],
@@ -34,11 +34,12 @@ let analyses = new Map();
 let analysisRequest = 0;
 let activeFolder = 'all';
 let chartMode = 'winrate';
-let currentView = 'library';
 let listMode = 'list';
 let libraryFilter = { result: '', favorites: false };
-let settings = loadLocal('yijing.settings', { positionVisits: 64, fullVisits: 24, criticalThreshold: 10 });
-let analysisTasks = loadLocal('yijing.tasks', []);
+let settings = { positionVisits: 64, fullVisits: 24, criticalThreshold: 10, soundEnabled: true, voiceEnabled: true, volume: 0.55, ...loadLocal('yijing.settings', {}) };
+let audioContext = null;
+let pendingJudgementMove = null;
+let lastSpokenMove = null;
 
 const folderNames = { all: '全部棋谱', recent: '最近复盘', mine: '我的对局', professional: '职业棋谱', trash: '回收站' };
 let pendingImports = [];
@@ -51,7 +52,7 @@ const chartCanvas = $('winChart');
 const chartCtx = chartCanvas.getContext('2d');
 
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char])); }
-function saveLibrary() { try { localStorage.setItem('yijing.games', JSON.stringify(games)); localStorage.setItem('yijing.folders', JSON.stringify(customFolders)); localStorage.setItem('yijing.tags', JSON.stringify(customTags)); localStorage.setItem('yijing.settings', JSON.stringify(settings)); localStorage.setItem('yijing.tasks', JSON.stringify(analysisTasks.slice(0,20))); return true; } catch { showToast('本地存储空间不足，修改仅在本次打开期间有效'); return false; } }
+function saveLibrary() { try { localStorage.setItem('yijing.games', JSON.stringify(games)); localStorage.setItem('yijing.folders', JSON.stringify(customFolders)); localStorage.setItem('yijing.tags', JSON.stringify(customTags)); localStorage.setItem('yijing.settings', JSON.stringify(settings)); return true; } catch { showToast('本地存储空间不足，修改仅在本次打开期间有效'); return false; } }
 function folderOptions(selected = 'mine') { return [{id:'mine',name:'我的对局'},{id:'professional',name:'职业棋谱'},...customFolders].map(folder=>`<option value="${escapeHtml(folder.id)}" ${folder.id===selected?'selected':''}>${escapeHtml(folder.name)}</option>`).join(''); }
 function allTags() { return ['布局研究','关键对局','待复盘',...customTags].filter((tag,index,array)=>array.indexOf(tag)===index); }
 function tagOptions(selected = '') { return ['<option value="">无标签</option>',...allTags().map(tag=>`<option value="${escapeHtml(tag)}" ${tag===selected?'selected':''}>${escapeHtml(tag)}</option>`)].join(''); }
@@ -98,30 +99,6 @@ function openGameModal(mode, game = currentGame) {
 
 function closeModal(id) { $(id).classList.add('hidden'); if(id==='gameModal'&&modalMode==='import') pendingImports=[]; }
 
-function renderFeatureView() {
-  if(currentView==='tasks') {
-    $('featureView').innerHTML=`<div class="feature-heading"><div><small>本地 KataGo 队列</small><h1>分析任务</h1></div><button class="secondary-btn" id="backToBoard">返回棋盘</button></div><div class="task-list">${analysisTasks.length?analysisTasks.map(task=>`<article class="task-card"><div class="task-status ${task.status}">${task.status==='done'?'已完成':task.status==='failed'?'失败':'分析中'}</div><div><strong>${escapeHtml(task.title)}</strong><span>${escapeHtml(task.detail)}</span></div><time>${escapeHtml(task.time)}</time></article>`).join(''):'<div class="feature-empty">还没有整局分析任务<br><small>打开棋谱后点击“分析整局”即可创建任务</small></div>'}</div>`;
-  } else {
-    const active=games.filter(game=>!game.deleted),blackWins=active.filter(game=>game.result.startsWith('黑')).length,whiteWins=active.filter(game=>game.result.startsWith('白')).length,total=Math.max(active.length,1);
-    const folders=[{id:'mine',name:'我的对局'},{id:'professional',name:'职业棋谱'},...customFolders];
-    $('featureView').innerHTML=`<div class="feature-heading"><div><small>本地棋谱库</small><h1>数据统计</h1></div><button class="secondary-btn" id="backToBoard">返回棋盘</button></div><div class="metric-grid"><article><span>对局总数</span><strong>${active.length}</strong><small>本地保存</small></article><article><span>黑棋胜局</span><strong>${blackWins}</strong><small>${(blackWins/total*100).toFixed(0)}%</small></article><article><span>白棋胜局</span><strong>${whiteWins}</strong><small>${(whiteWins/total*100).toFixed(0)}%</small></article><article><span>收藏棋谱</span><strong>${active.filter(game=>game.favorite).length}</strong><small>重点复盘</small></article></div><div class="folder-stats"><h2>分类分布</h2>${folders.map(folder=>{const count=active.filter(game=>game.folder===folder.id).length;return `<div><span>${escapeHtml(folder.name)}</span><i><b style="width:${count/total*100}%"></b></i><em>${count} 局</em></div>`}).join('')}</div>`;
-  }
-  $('backToBoard').onclick=()=>showView('library');
-}
-
-function showView(view) {
-  currentView=view;
-  document.querySelectorAll('.nav-item').forEach(button=>button.classList.toggle('active',button.dataset.view===view));
-  document.querySelector('.content').classList.toggle('hidden',view!=='library');
-  $('featureView').classList.toggle('hidden',view==='library');
-  if(view!=='library')renderFeatureView();
-}
-
-function addAnalysisTask(status, detail) {
-  const task={id:Date.now(),title:currentGame.title,status,detail,time:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})};
-  analysisTasks.unshift(task);$('taskCount').textContent=analysisTasks.filter(item=>item.status==='running').length;saveLibrary();return task;
-}
-
 function showToast(message) {
   const toast = $('toast'); toast.textContent = message; toast.classList.add('show');
   clearTimeout(showToast.timer); showToast.timer = setTimeout(() => toast.classList.remove('show'), 2300);
@@ -152,7 +129,7 @@ function renderGames(filter = '') {
 }
 
 function selectGame(id) {
-  currentGame = games.find(g => g.id === id) || games[0]; currentMove = Math.min(38,currentGame.moves.length); mark = null; analyses = new Map();
+  currentGame = games.find(g => g.id === id) || games[0]; currentMove = Math.min(38,currentGame.moves.length); mark = null; analyses = new Map(); pendingJudgementMove = null; lastSpokenMove = null;
   $('gameTitle').textContent=currentGame.title; $('blackName').innerHTML=`${currentGame.black} <small>${currentGame.blackRank}</small>`; $('whiteName').innerHTML=`${currentGame.white} <small>${currentGame.whiteRank}</small>`;
   $('favoriteButton').textContent=currentGame.favorite?'★':'☆';$('favoriteButton').classList.toggle('active',Boolean(currentGame.favorite));
   $('moveSlider').max=currentGame.moves.length; $('moveTotal').textContent=currentGame.moves.length;
@@ -193,11 +170,50 @@ function drawChart(){
 function renderAnalysis(){const result=currentAnalysis();if(!result){$('blackWin').textContent=$('whiteWin').textContent='--';$('evalBlack').innerHTML=$('evalWhite').innerHTML='--<sup>%</sup>';$('blackBar').style.width='0';$('leadLabel').textContent='等待分析';$('scoreLead').textContent='-- 目';$('visitsLabel').textContent='等待引擎';$('swingText').className='swing';$('swingText').textContent='当前手尚未分析';renderCandidates();return}const black=toBlackWin(result,result.rootInfo.winrate),white=100-black,lead=Number(result.rootInfo.scoreLead||0);$('blackWin').textContent=black.toFixed(1)+'%';$('whiteWin').textContent=white.toFixed(1)+'%';$('evalBlack').innerHTML=black.toFixed(1)+'<sup>%</sup>';$('evalWhite').innerHTML=white.toFixed(1)+'<sup>%</sup>';$('blackBar').style.width=black+'%';$('leadLabel').textContent=`${lead>=0?'黑棋':'白棋'}领先`;$('scoreLead').textContent=`${lead>=0?'+':''}${lead.toFixed(1)} 目`;$('visitsLabel').textContent=`访问 ${result.rootInfo.visits||0} 次`;const previous=analyses.get(currentMove-1);const delta=previous?black-toBlackWin(previous,previous.rootInfo.winrate):null;const swing=$('swingText');swing.className='swing '+(delta===null?'':delta<0?'down':'up');swing.textContent=delta===null?`KataGo · ${result.rootInfo.visits||0} 次访问`:`${delta<0?'↓':'↑'} 较上一手 ${delta>=0?'+':''}${delta.toFixed(1)}% · ${Math.abs(delta)>10?'关键手':'局面平稳'}`;renderCandidates()}
 function update(){currentMove=Math.max(0,Math.min(currentMove,currentGame.moves.length));$('moveSlider').value=currentMove;$('moveNumber').textContent=currentMove;$('evalMove').textContent=currentMove;renderAnalysis();drawBoard();drawChart()}
 
-async function requestAnalysis(turns,maxVisits){const request={moves:currentGame.moves,analyzeTurns:turns,maxVisits};if(window.__TAURI__?.core?.invoke)return window.__TAURI__.core.invoke('analyze_position',{request});const response=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)});const body=await response.json();if(!response.ok)throw new Error(body.error||'KataGo 分析失败');return body.results}
-async function analyzeCurrentPosition(){const token=++analysisRequest;$('engineStatus').className='status';$('engineStatus').innerHTML='<i></i>CUDA 分析中';$('swingText').textContent='正在等待本地 KataGo…';try{const results=await requestAnalysis([currentMove],settings.positionVisits);if(token!==analysisRequest)return;results.forEach(result=>analyses.set(result.turnNumber,result));$('engineStatus').innerHTML='<i></i>TensorRT / CUDA';renderAnalysis();drawBoard();drawChart()}catch(error){if(token!==analysisRequest)return;$('engineStatus').className='status error';$('engineStatus').innerHTML='<i></i>引擎不可用';$('swingText').textContent=error.message;showToast(error.message)}}
+function ensureAudio() {
+  if (!settings.soundEnabled) return null;
+  if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioContext.state === 'suspended') audioContext.resume();
+  return audioContext;
+}
+function playStoneSound(capture = false) {
+  const ctx = ensureAudio();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  const gain = ctx.createGain();
+  const osc = ctx.createOscillator();
+  osc.type = capture ? 'triangle' : 'sine';
+  osc.frequency.setValueAtTime(capture ? 150 : 245, now);
+  osc.frequency.exponentialRampToValueAtTime(capture ? 75 : 130, now + (capture ? .16 : .08));
+  gain.gain.setValueAtTime(Math.max(.001, settings.volume * (capture ? .28 : .16)), now);
+  gain.gain.exponentialRampToValueAtTime(.001, now + (capture ? .18 : .1));
+  osc.connect(gain).connect(ctx.destination); osc.start(now); osc.stop(now + (capture ? .2 : .12));
+  if (capture) {
+    const click = ctx.createOscillator(); const clickGain = ctx.createGain();
+    click.type = 'square'; click.frequency.value = 520; clickGain.gain.setValueAtTime(settings.volume * .08, now); clickGain.gain.exponentialRampToValueAtTime(.001, now + .05);
+    click.connect(clickGain).connect(ctx.destination); click.start(now); click.stop(now + .06);
+  }
+}
+function speakJudgement(result) {
+  if (!settings.voiceEnabled || !window.speechSynthesis || !result || currentMove < 1 || lastSpokenMove === currentMove) return;
+  const previous = analyses.get(currentMove - 1); if (!previous) return;
+  const delta = toBlackWin(result, result.rootInfo.winrate) - toBlackWin(previous, previous.rootInfo.winrate);
+  const mover = currentGame.moves[currentMove - 1]?.color;
+  const swing = mover === 'W' ? -delta : delta;
+  if (Math.abs(swing) < settings.criticalThreshold) return;
+  const good = ['这手有说法！','好好好，这么玩是吧。','天才！'];
+  const bad = ['坏了，这波亏麻了。','啊？这也能下？','完了，寄！'];
+  const utterance = new SpeechSynthesisUtterance((swing > 0 ? good : bad)[currentMove % 3]);
+  utterance.lang = 'zh-CN'; utterance.volume = Math.max(0, Math.min(1, settings.volume)); utterance.rate = 1.05;
+  const voices = speechSynthesis.getVoices(); const zh = voices.find(v => /^zh/i.test(v.lang)); if (zh) utterance.voice = zh;
+  speechSynthesis.cancel(); speechSynthesis.speak(utterance); lastSpokenMove = currentMove;
+}
 
-function setMove(value){currentMove=Number(value);update();clearTimeout(setMove.timer);setMove.timer=setTimeout(()=>{if(!analyses.has(currentMove))analyzeCurrentPosition()},180)}
-function togglePlay(){if(playing){clearInterval(playing);playing=null;$('playButton').textContent='▶';return}if(currentMove>=currentGame.moves.length)currentMove=0;$('playButton').textContent='Ⅱ';playing=setInterval(()=>{if(currentMove>=currentGame.moves.length){togglePlay();return}currentMove++;update()},Number($('speedSelect').value))}
+async function requestAnalysis(turns,maxVisits){const request={moves:currentGame.moves,analyzeTurns:turns,maxVisits};if(window.__TAURI__?.core?.invoke)return window.__TAURI__.core.invoke('analyze_position',{request});const response=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)});const body=await response.json();if(!response.ok)throw new Error(body.error||'KataGo 分析失败');return body.results}
+async function analyzeCurrentPosition(){const token=++analysisRequest;$('engineStatus').className='status';$('engineStatus').innerHTML='<i></i>CUDA 分析中';$('swingText').textContent='正在等待本地 KataGo…';try{const results=await requestAnalysis([currentMove],settings.positionVisits);if(token!==analysisRequest)return;results.forEach(result=>analyses.set(result.turnNumber,result));$('engineStatus').innerHTML='<i></i>TensorRT / CUDA';renderAnalysis();drawBoard();drawChart();if(pendingJudgementMove===currentMove){speakJudgement(analyses.get(currentMove));pendingJudgementMove=null}}catch(error){if(token!==analysisRequest)return;$('engineStatus').className='status error';$('engineStatus').innerHTML='<i></i>引擎不可用';$('swingText').textContent=error.message;showToast(error.message)}}
+
+function setMove(value){const next=Math.max(0,Math.min(Number(value),currentGame.moves.length));const forward=next===currentMove+1;if(forward){playStoneSound(capturedStones(currentGame.moves,next)>0)}currentMove=next;pendingJudgementMove=forward?next:null;update();if(forward&&analyses.has(currentMove)){speakJudgement(analyses.get(currentMove));pendingJudgementMove=null}clearTimeout(setMove.timer);setMove.timer=setTimeout(()=>{if(!analyses.has(currentMove))analyzeCurrentPosition()},180)}
+function togglePlay(){if(playing){clearInterval(playing);playing=null;$('playButton').textContent='▶';return}if(currentMove>=currentGame.moves.length)currentMove=0;$('playButton').textContent='Ⅱ';playing=setInterval(()=>{if(currentMove>=currentGame.moves.length){togglePlay();return}setMove(currentMove+1)},Number($('speedSelect').value))}
 
 $('searchInput').addEventListener('input',e=>renderGames(e.target.value));
 $('importButton').onclick=()=>$('fileInput').click();
@@ -213,19 +229,19 @@ $('favoriteButton').onclick=()=>{currentGame.favorite=!currentGame.favorite;save
 $('filterButton').onclick=()=>{$('resultFilter').value=libraryFilter.result;$('favoriteFilter').checked=libraryFilter.favorites;$('filterModal').classList.remove('hidden')};
 $('filterForm').onsubmit=e=>{e.preventDefault();libraryFilter={result:$('resultFilter').value,favorites:$('favoriteFilter').checked};$('filterModal').classList.add('hidden');$('filterButton').classList.toggle('active',Boolean(libraryFilter.result||libraryFilter.favorites));renderGames($('searchInput').value)};
 $('resetFilterButton').onclick=()=>{libraryFilter={result:'',favorites:false};$('resultFilter').value='';$('favoriteFilter').checked=false;$('filterButton').classList.remove('active');renderGames($('searchInput').value);$('filterModal').classList.add('hidden')};
-$('settingsButton').onclick=()=>{$('positionVisitsInput').value=settings.positionVisits;$('fullVisitsInput').value=settings.fullVisits;$('criticalThresholdInput').value=settings.criticalThreshold;$('settingsModal').classList.remove('hidden')};
-$('settingsForm').onsubmit=e=>{e.preventDefault();settings={positionVisits:Number($('positionVisitsInput').value),fullVisits:Number($('fullVisitsInput').value),criticalThreshold:Number($('criticalThresholdInput').value)};saveLibrary();$('settingsModal').classList.add('hidden');drawChart();showToast('分析设置已保存')};
+$('settingsButton').onclick=()=>{$('positionVisitsInput').value=settings.positionVisits;$('fullVisitsInput').value=settings.fullVisits;$('criticalThresholdInput').value=settings.criticalThreshold;$('soundEnabledInput').checked=settings.soundEnabled;$('voiceEnabledInput').checked=settings.voiceEnabled;$('volumeInput').value=settings.volume;$('settingsModal').classList.remove('hidden')};
+$('settingsForm').onsubmit=e=>{e.preventDefault();settings={...settings,positionVisits:Number($('positionVisitsInput').value),fullVisits:Number($('fullVisitsInput').value),criticalThreshold:Number($('criticalThresholdInput').value),soundEnabled:$('soundEnabledInput').checked,voiceEnabled:$('voiceEnabledInput').checked,volume:Number($('volumeInput').value)};saveLibrary();$('soundButton').classList.toggle('active',settings.soundEnabled);$('soundButton').title=settings.soundEnabled?'关闭声音':'开启声音';$('settingsModal').classList.add('hidden');drawChart();showToast('分析设置已保存')};
 document.querySelectorAll('[data-close]').forEach(button=>button.onclick=()=>closeModal(button.dataset.close));
 document.querySelectorAll('.modal-backdrop').forEach(backdrop=>backdrop.onclick=e=>{if(e.target===backdrop)closeModal(backdrop.id)});
 $('moveSlider').oninput=e=>setMove(e.target.value);$('firstButton').onclick=()=>setMove(0);$('prevButton').onclick=()=>setMove(currentMove-1);$('nextButton').onclick=()=>setMove(currentMove+1);$('lastButton').onclick=()=>setMove(currentGame.moves.length);$('playButton').onclick=togglePlay;
 $('speedSelect').onchange=()=>{if(playing){togglePlay();togglePlay()}};
 $('numberToggle').onclick=e=>{showNumbers=!showNumbers;e.currentTarget.classList.toggle('active',showNumbers);drawBoard()};$('heatToggle').onclick=e=>{showHeat=!showHeat;e.currentTarget.classList.toggle('active',showHeat);drawBoard()};$('markButton').onclick=()=>showToast('点击棋盘交叉点添加三角标记');
+$('soundButton').onclick=e=>{settings.soundEnabled=!settings.soundEnabled;e.currentTarget.classList.toggle('active',settings.soundEnabled);e.currentTarget.title=settings.soundEnabled?'关闭声音':'开启声音';saveLibrary();if(settings.soundEnabled)playStoneSound(false)};
 boardCanvas.onclick=e=>{const rect=boardCanvas.getBoundingClientRect(),scale=boardCanvas.width/rect.width,step=(boardCanvas.width-86)/18;const x=Math.round((e.offsetX*scale-43)/step),y=Math.round((e.offsetY*scale-43)/step);if(x>=0&&x<19&&y>=0&&y<19){mark={x,y};drawBoard();showToast(`已标记 ${pointName(x,y)}`)}};
-document.querySelectorAll('.nav-item').forEach(button=>button.onclick=()=>showView(button.dataset.view));
 $('listViewButton').onclick=()=>{listMode='list';$('listViewButton').classList.add('active');$('gridViewButton').classList.remove('active');renderGames($('searchInput').value)};
 $('gridViewButton').onclick=()=>{listMode='grid';$('gridViewButton').classList.add('active');$('listViewButton').classList.remove('active');renderGames($('searchInput').value)};
 document.querySelectorAll('.chart-tabs button').forEach(button=>button.onclick=()=>{chartMode=button.dataset.chart;document.querySelectorAll('.chart-tabs button').forEach(item=>item.classList.toggle('active',item===button));$('chartTitle').textContent=chartMode==='winrate'?'胜率走势':'目差走势';$('chartLegend').innerHTML=`<i class="legend-black"></i>${chartMode==='winrate'?'黑棋胜率':'黑棋目差'}`;drawChart()});
-$('analyzeButton').onclick=async()=>{const button=$('analyzeButton'),progress=$('analysisProgress'),task=addAnalysisTask('running',`共 ${currentGame.moves.length+1} 个局面`);button.disabled=true;$('analysisLabel').textContent='CUDA 正在分析整局…';$('analysisMeta').textContent='请稍候';progress.className='loading';try{const turns=Array.from({length:currentGame.moves.length+1},(_,i)=>i),results=await requestAnalysis(turns,settings.fullVisits);results.forEach(result=>analyses.set(result.turnNumber,result));task.status='done';task.detail=`已完成 ${results.length} 个局面 · 每手 ${settings.fullVisits} visits`;$('analysisLabel').textContent='全局分析已完成';$('analysisMeta').textContent=`${results.length} / ${turns.length} 手`;button.textContent='重新分析';update();showToast('KataGo 整局分析完成')}catch(error){task.status='failed';task.detail=error.message;$('analysisLabel').textContent='分析失败';$('analysisMeta').textContent=error.message;showToast(error.message)}finally{button.disabled=false;progress.className='';progress.style.width=analyses.size?`${analyses.size/(currentGame.moves.length+1)*100}%`:'0';$('taskCount').textContent=analysisTasks.filter(item=>item.status==='running').length;saveLibrary();if(currentView==='tasks')renderFeatureView()}};
+$('analyzeButton').onclick=async()=>{const button=$('analyzeButton'),progress=$('analysisProgress');button.disabled=true;$('analysisLabel').textContent='CUDA 正在分析整局…';$('analysisMeta').textContent='请稍候';progress.className='loading';try{const turns=Array.from({length:currentGame.moves.length+1},(_,i)=>i),results=await requestAnalysis(turns,settings.fullVisits);results.forEach(result=>analyses.set(result.turnNumber,result));$('analysisLabel').textContent='全局分析已完成';$('analysisMeta').textContent=`${results.length} / ${turns.length} 手`;button.textContent='重新分析';update();showToast('KataGo 整局分析完成')}catch(error){$('analysisLabel').textContent='分析失败';$('analysisMeta').textContent=error.message;showToast(error.message)}finally{button.disabled=false;progress.className='';progress.style.width=analyses.size?`${analyses.size/(currentGame.moves.length+1)*100}%`:'0';saveLibrary()}};
 document.addEventListener('keydown',e=>{if(e.target.matches('input,textarea'))return;if(e.key==='ArrowLeft')setMove(currentMove-1);if(e.key==='ArrowRight')setMove(currentMove+1);if(e.key===' ') {e.preventDefault();togglePlay()}});
 
-renderFolders();renderTags();$('taskCount').textContent=analysisTasks.filter(item=>item.status==='running').length;renderGames();update();analyzeCurrentPosition();
+renderFolders();renderTags();renderGames();update();analyzeCurrentPosition();

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { emptyBoard, applyMove, replay, parseSgf, pointName, gtpPointToCoords } = require('../core.js');
+const { emptyBoard, applyMove, replay, capturedStones, parseSgf, pointName, gtpPointToCoords } = require('../core.js');
 const { buildQuery, coordsToGtp } = require('../katago.js');
 
 test('落子并重放棋局', () => {
@@ -21,6 +21,17 @@ test('拒绝自杀手', () => {
   const board = emptyBoard(5);
   board[0][1] = board[1][0] = board[1][2] = board[2][1] = 'W';
   assert.equal(applyMove(board, {x:1,y:1,color:'B'}), null);
+});
+
+test('检测单手提子数量', () => {
+  const moves = [
+    {x:1,y:0,color:'B'}, {x:1,y:1,color:'W'},
+    {x:0,y:1,color:'B'}, {x:4,y:4,color:'W'},
+    {x:2,y:1,color:'B'}, {x:3,y:4,color:'W'},
+    {x:1,y:2,color:'B'}
+  ];
+  assert.equal(capturedStones(moves, 7, 5), 1);
+  assert.equal(capturedStones(moves, 6, 5), 0);
 });
 
 test('解析 SGF 元数据与主线着法', () => {
