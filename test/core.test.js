@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { emptyBoard, applyMove, replay, parseSgf, pointName } = require('../core.js');
+const { emptyBoard, applyMove, replay, parseSgf, pointName, gtpPointToCoords } = require('../core.js');
+const { buildQuery, coordsToGtp } = require('../katago.js');
 
 test('落子并重放棋局', () => {
   const moves = [{x:3,y:3,color:'B'},{x:4,y:3,color:'W'}];
@@ -32,4 +33,13 @@ test('解析 SGF 元数据与主线着法', () => {
 
 test('坐标名称跳过字母 I', () => {
   assert.equal(pointName(8, 3), 'J16');
+  assert.equal(coordsToGtp(8, 3), 'J16');
+  assert.deepEqual(gtpPointToCoords('J16'), { x: 8, y: 3 });
+});
+
+test('生成 KataGo Analysis Engine 查询', () => {
+  const query = buildQuery({ id: 'test', moves: [{x:15,y:3,color:'B'}], analyzeTurns: [0,1], maxVisits: 32 });
+  assert.deepEqual(query.moves, [['B','Q16']]);
+  assert.deepEqual(query.analyzeTurns, [0,1]);
+  assert.equal(query.maxVisits, 32);
 });

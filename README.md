@@ -15,3 +15,5 @@ npm start
 ```powershell
 npm test
 ```
+
+Demo 默认连接本机 `G:\Edge_download\KataGo` 下的 TensorRT / CUDA KataGo。需要使用其他安装位置时，可设置 `KATAGO_EXE`、`KATAGO_MODEL`、`KATAGO_CONFIG` 和 `KATAGO_DATA_DIR` 环境变量。

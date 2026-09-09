@@ -1,4 +1,4 @@
-const { replay, parseSgf, pointName } = window.YijingCore;
+const { replay, parseSgf, pointName, gtpPointToCoords } = window.YijingCore;
 
 const baseMoves = [
   [3,15],[15,3],[15,15],[3,3],[5,2],[2,5],[16,6],[16,10],[13,16],[10,16],
@@ -25,19 +25,14 @@ let playing = null;
 let showNumbers = true;
 let showHeat = true;
 let mark = null;
+let analyses = new Map();
+let analysisRequest = 0;
 
 const $ = id => document.getElementById(id);
 const boardCanvas = $('goBoard');
 const boardCtx = boardCanvas.getContext('2d');
 const chartCanvas = $('winChart');
 const chartCtx = chartCanvas.getContext('2d');
-
-function winRate(move, game = currentGame) {
-  const seed = game.id * 0.7;
-  const trend = 53 - move * .17 + Math.sin(move * .31 + seed) * 6 + Math.sin(move * .09) * 3;
-  const shock = move >= 38 ? -8.5 : 0;
-  return Math.max(12, Math.min(88, trend + shock));
-}
 
 function showToast(message) {
   const toast = $('toast'); toast.textContent = message; toast.classList.add('show');
@@ -56,10 +51,10 @@ function renderGames(filter = '') {
 }
 
 function selectGame(id) {
-  currentGame = games.find(g => g.id === id) || games[0]; currentMove = Math.min(38,currentGame.moves.length); mark = null;
+  currentGame = games.find(g => g.id === id) || games[0]; currentMove = Math.min(38,currentGame.moves.length); mark = null; analyses = new Map();
   $('gameTitle').textContent=currentGame.title; $('blackName').innerHTML=`${currentGame.black} <small>${currentGame.blackRank}</small>`; $('whiteName').innerHTML=`${currentGame.white} <small>${currentGame.whiteRank}</small>`;
   $('moveSlider').max=currentGame.moves.length; $('moveTotal').textContent=currentGame.moves.length;
-  renderGames($('searchInput').value); update();
+  renderGames($('searchInput').value); update(); analyzeCurrentPosition();
 }
 
 function drawBoard() {
@@ -76,16 +71,21 @@ function drawBoard() {
   if(mark){ctx.strokeStyle='#c34e3f';ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(pad+mark.x*step, pad+(mark.y-.3)*step);ctx.lineTo(pad+(mark.x-.3)*step,pad+(mark.y+.25)*step);ctx.lineTo(pad+(mark.x+.3)*step,pad+(mark.y+.25)*step);ctx.closePath();ctx.stroke()}
 }
 
-function candidates(){const m=currentGame.moves[Math.min(currentMove,currentGame.moves.length-1)]||{x:9,y:9};return [{x:(m.x+3)%19,y:(m.y+1)%19},{x:(m.x+6)%19,y:(m.y+5)%19},{x:(m.x+1)%19,y:(m.y+7)%19}].filter((c,i,a)=>a.findIndex(v=>v.x===c.x&&v.y===c.y)===i)}
+function currentAnalysis(){return analyses.get(currentMove)}
+function candidates(){return (currentAnalysis()?.moveInfos||[]).slice(0,3).map(info=>({...gtpPointToCoords(info.move),...info})).filter(move=>Number.isInteger(move.x)&&Number.isInteger(move.y))}
 
-function renderCandidates(){const rate=winRate(currentMove);$('candidateList').innerHTML=candidates().map((c,i)=>`<div class="candidate ${i===0?'active':''}" data-x="${c.x}" data-y="${c.y}"><span class="candidate-index">${i+1}</span><div class="candidate-main"><b>${pointName(c.x,c.y)}</b><span>${i?'稳健应对':'AI 首选 · 保持主动'}</span></div><div class="candidate-win"><b>${(rate+4.1-i*1.7).toFixed(1)}%</b><span>+${(3.4-i*.8).toFixed(1)} 目</span></div></div>`).join('');document.querySelectorAll('.candidate').forEach(el=>el.onclick=()=>{mark={x:+el.dataset.x,y:+el.dataset.y};drawBoard();showToast(`已在棋盘标出候选点 ${pointName(mark.x,mark.y)}`)})}
+function toBlackWin(_result, rate){return rate*100}
+function renderCandidates(){const result=currentAnalysis();const moves=candidates();$('candidateList').innerHTML=moves.length?moves.map((c,i)=>`<div class="candidate ${i===0?'active':''}" data-x="${c.x}" data-y="${c.y}"><span class="candidate-index">${i+1}</span><div class="candidate-main"><b>${c.move}</b><span>${i?'候选变化':'KataGo 首选'} · ${c.visits||0} 次访问</span></div><div class="candidate-win"><b>${toBlackWin(result,c.winrate).toFixed(1)}%</b><span>${Number(c.scoreLead||0)>=0?'+':''}${Number(c.scoreLead||0).toFixed(1)} 目</span></div></div>`).join(''):'<div class="empty-analysis">分析后显示推荐着法</div>';document.querySelectorAll('.candidate').forEach(el=>el.onclick=()=>{mark={x:+el.dataset.x,y:+el.dataset.y};drawBoard();showToast(`已在棋盘标出候选点 ${pointName(mark.x,mark.y)}`)})}
 
-function drawChart(){const ctx=chartCtx,w=chartCanvas.width,h=chartCanvas.height,p={l:35,r:15,t:15,b:26};ctx.clearRect(0,0,w,h);ctx.font='18px sans-serif';ctx.fillStyle='#929995';ctx.strokeStyle='#e7e7e2';ctx.lineWidth=1;[0,25,50,75,100].forEach(v=>{const y=p.t+(100-v)/100*(h-p.t-p.b);ctx.beginPath();ctx.moveTo(p.l,y);ctx.lineTo(w-p.r,y);ctx.stroke();ctx.fillText(v+'%',0,y+5)});ctx.setLineDash([6,6]);const half=p.t+.5*(h-p.t-p.b);ctx.strokeStyle='#aeb5b0';ctx.beginPath();ctx.moveTo(p.l,half);ctx.lineTo(w-p.r,half);ctx.stroke();ctx.setLineDash([]);const max=currentGame.moves.length;ctx.beginPath();for(let i=0;i<=max;i++){const x=p.l+i/max*(w-p.l-p.r),y=p.t+(100-winRate(i))/100*(h-p.t-p.b);i?ctx.lineTo(x,y):ctx.moveTo(x,y)}ctx.strokeStyle='#2b6249';ctx.lineWidth=3;ctx.stroke();
-  [23,38,52].filter(v=>v<=max).forEach(v=>{const x=p.l+v/max*(w-p.l-p.r),y=p.t+(100-winRate(v))/100*(h-p.t-p.b);ctx.fillStyle='#b85d4b';ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fill()});const x=p.l+currentMove/max*(w-p.l-p.r),y=p.t+(100-winRate(currentMove))/100*(h-p.t-p.b);ctx.fillStyle='#fff';ctx.strokeStyle='#244e3c';ctx.lineWidth=4;ctx.beginPath();ctx.arc(x,y,7,0,Math.PI*2);ctx.fill();ctx.stroke()}
+function drawChart(){const ctx=chartCtx,w=chartCanvas.width,h=chartCanvas.height,p={l:35,r:15,t:15,b:26};ctx.clearRect(0,0,w,h);ctx.font='18px "Microsoft YaHei UI"';ctx.fillStyle='#929995';ctx.strokeStyle='#e7e7e2';ctx.lineWidth=1;[0,25,50,75,100].forEach(v=>{const y=p.t+(100-v)/100*(h-p.t-p.b);ctx.beginPath();ctx.moveTo(p.l,y);ctx.lineTo(w-p.r,y);ctx.stroke();ctx.fillText(v+'%',0,y+5)});ctx.setLineDash([6,6]);const half=p.t+.5*(h-p.t-p.b);ctx.strokeStyle='#aeb5b0';ctx.beginPath();ctx.moveTo(p.l,half);ctx.lineTo(w-p.r,half);ctx.stroke();ctx.setLineDash([]);const max=currentGame.moves.length;const points=[...analyses.values()].map(r=>({turn:r.turnNumber,rate:toBlackWin(r,r.rootInfo.winrate)})).sort((a,b)=>a.turn-b.turn);if(points.length){ctx.beginPath();points.forEach((point,i)=>{const x=p.l+point.turn/max*(w-p.l-p.r),y=p.t+(100-point.rate)/100*(h-p.t-p.b);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.strokeStyle='#2b6249';ctx.lineWidth=3;ctx.stroke();points.forEach((point,i)=>{if(i&&Math.abs(point.rate-points[i-1].rate)>10){const x=p.l+point.turn/max*(w-p.l-p.r),y=p.t+(100-point.rate)/100*(h-p.t-p.b);ctx.fillStyle='#b85d4b';ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fill()}})}const current=analyses.get(currentMove);if(current){const rate=toBlackWin(current,current.rootInfo.winrate),x=p.l+currentMove/max*(w-p.l-p.r),y=p.t+(100-rate)/100*(h-p.t-p.b);ctx.fillStyle='#fff';ctx.strokeStyle='#244e3c';ctx.lineWidth=4;ctx.beginPath();ctx.arc(x,y,7,0,Math.PI*2);ctx.fill();ctx.stroke()}}
 
-function update(){currentMove=Math.max(0,Math.min(currentMove,currentGame.moves.length));$('moveSlider').value=currentMove;$('moveNumber').textContent=currentMove;$('evalMove').textContent=currentMove;const black=winRate(currentMove),white=100-black;$('blackWin').textContent=black.toFixed(1)+'%';$('whiteWin').textContent=white.toFixed(1)+'%';$('evalBlack').innerHTML=black.toFixed(1)+'<sup>%</sup>';$('evalWhite').innerHTML=white.toFixed(1)+'<sup>%</sup>';$('blackBar').style.width=black+'%';const lead=(Math.abs(50-black)*.5+.3).toFixed(1);$('scoreLead').textContent=`${black<50?'+':'-'}${lead} 目`;const delta=currentMove?black-winRate(currentMove-1):0;const swing=$('swingText');swing.className='swing '+(delta<0?'down':'up');swing.textContent=`${delta<0?'↓':'↑'} 较上一手 ${delta>=0?'+':''}${delta.toFixed(1)}% · ${Math.abs(delta)>8?'疑问手':'局面平稳'}`;drawBoard();drawChart();renderCandidates()}
+function renderAnalysis(){const result=currentAnalysis();if(!result){$('blackWin').textContent=$('whiteWin').textContent='--';$('evalBlack').innerHTML=$('evalWhite').innerHTML='--<sup>%</sup>';$('blackBar').style.width='0';$('leadLabel').textContent='等待分析';$('scoreLead').textContent='-- 目';$('visitsLabel').textContent='等待引擎';$('swingText').className='swing';$('swingText').textContent='当前手尚未分析';renderCandidates();return}const black=toBlackWin(result,result.rootInfo.winrate),white=100-black,lead=Number(result.rootInfo.scoreLead||0);$('blackWin').textContent=black.toFixed(1)+'%';$('whiteWin').textContent=white.toFixed(1)+'%';$('evalBlack').innerHTML=black.toFixed(1)+'<sup>%</sup>';$('evalWhite').innerHTML=white.toFixed(1)+'<sup>%</sup>';$('blackBar').style.width=black+'%';$('leadLabel').textContent=`${lead>=0?'黑棋':'白棋'}领先`;$('scoreLead').textContent=`${lead>=0?'+':''}${lead.toFixed(1)} 目`;$('visitsLabel').textContent=`访问 ${result.rootInfo.visits||0} 次`;const previous=analyses.get(currentMove-1);const delta=previous?black-toBlackWin(previous,previous.rootInfo.winrate):null;const swing=$('swingText');swing.className='swing '+(delta===null?'':delta<0?'down':'up');swing.textContent=delta===null?`KataGo · ${result.rootInfo.visits||0} 次访问`:`${delta<0?'↓':'↑'} 较上一手 ${delta>=0?'+':''}${delta.toFixed(1)}% · ${Math.abs(delta)>10?'关键手':'局面平稳'}`;renderCandidates()}
+function update(){currentMove=Math.max(0,Math.min(currentMove,currentGame.moves.length));$('moveSlider').value=currentMove;$('moveNumber').textContent=currentMove;$('evalMove').textContent=currentMove;renderAnalysis();drawBoard();drawChart()}
 
-function setMove(value){currentMove=Number(value);update()}
+async function requestAnalysis(turns,maxVisits){const response=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({moves:currentGame.moves,analyzeTurns:turns,maxVisits})});const body=await response.json();if(!response.ok)throw new Error(body.error||'KataGo 分析失败');return body.results}
+async function analyzeCurrentPosition(){const token=++analysisRequest;$('engineStatus').className='status';$('engineStatus').innerHTML='<i></i>CUDA 分析中';$('swingText').textContent='正在等待本地 KataGo…';try{const results=await requestAnalysis([currentMove],64);if(token!==analysisRequest)return;results.forEach(result=>analyses.set(result.turnNumber,result));$('engineStatus').innerHTML='<i></i>TensorRT / CUDA';renderAnalysis();drawBoard();drawChart()}catch(error){if(token!==analysisRequest)return;$('engineStatus').className='status error';$('engineStatus').innerHTML='<i></i>引擎不可用';$('swingText').textContent=error.message;showToast(error.message)}}
+
+function setMove(value){currentMove=Number(value);update();clearTimeout(setMove.timer);setMove.timer=setTimeout(()=>{if(!analyses.has(currentMove))analyzeCurrentPosition()},180)}
 function togglePlay(){if(playing){clearInterval(playing);playing=null;$('playButton').textContent='▶';return}if(currentMove>=currentGame.moves.length)currentMove=0;$('playButton').textContent='Ⅱ';playing=setInterval(()=>{if(currentMove>=currentGame.moves.length){togglePlay();return}currentMove++;update()},Number($('speedSelect').value))}
 
 $('searchInput').addEventListener('input',e=>renderGames(e.target.value));
@@ -95,9 +95,9 @@ $('moveSlider').oninput=e=>setMove(e.target.value);$('firstButton').onclick=()=>
 $('speedSelect').onchange=()=>{if(playing){togglePlay();togglePlay()}};
 $('numberToggle').onclick=e=>{showNumbers=!showNumbers;e.currentTarget.classList.toggle('active',showNumbers);drawBoard()};$('heatToggle').onclick=e=>{showHeat=!showHeat;e.currentTarget.classList.toggle('active',showHeat);drawBoard()};$('markButton').onclick=()=>showToast('点击棋盘交叉点添加三角标记');
 boardCanvas.onclick=e=>{const rect=boardCanvas.getBoundingClientRect(),scale=boardCanvas.width/rect.width,step=(boardCanvas.width-86)/18;const x=Math.round((e.offsetX*scale-43)/step),y=Math.round((e.offsetY*scale-43)/step);if(x>=0&&x<19&&y>=0&&y<19){mark={x,y};drawBoard();showToast(`已标记 ${pointName(x,y)}`)}};
-document.querySelectorAll('.analysis-tabs button').forEach(btn=>btn.onclick=()=>{document.querySelectorAll('.analysis-tabs button').forEach(b=>b.classList.remove('active'));btn.classList.add('active');['ai','comment','info'].forEach(t=>$(t+'Tab').classList.toggle('hidden',btn.dataset.tab!==t))});
+document.querySelectorAll('.analysis-tabs button').forEach(btn=>btn.onclick=()=>{document.querySelectorAll('.analysis-tabs button').forEach(b=>b.classList.remove('active'));btn.classList.add('active');['ai','info'].forEach(t=>$(t+'Tab').classList.toggle('hidden',btn.dataset.tab!==t))});
 document.querySelectorAll('.tags button').forEach(btn=>btn.onclick=()=>{$('searchInput').value=btn.dataset.tag;renderGames(btn.dataset.tag);document.querySelectorAll('.tags button').forEach(b=>b.classList.remove('active'));btn.classList.add('active')});
-$('analyzeButton').onclick=()=>{let p=0;$('analyzeButton').disabled=true;$('analysisLabel').textContent='KataGo 模拟分析中…';const timer=setInterval(()=>{p+=4;$('analysisProgress').style.width=p+'%';$('analysisMeta').textContent=`${Math.round(currentGame.moves.length*p/100)} / ${currentGame.moves.length} 手`;if(p>=100){clearInterval(timer);$('analyzeButton').disabled=false;$('analysisLabel').textContent='全局分析已完成';$('analyzeButton').textContent='重新分析';showToast('分析完成，结果已保存到本地')}},55)};
+$('analyzeButton').onclick=async()=>{const button=$('analyzeButton'),progress=$('analysisProgress');button.disabled=true;$('analysisLabel').textContent='CUDA 正在分析整局…';$('analysisMeta').textContent='请稍候';progress.className='loading';try{const turns=Array.from({length:currentGame.moves.length+1},(_,i)=>i),results=await requestAnalysis(turns,24);results.forEach(result=>analyses.set(result.turnNumber,result));$('analysisLabel').textContent='全局分析已完成';$('analysisMeta').textContent=`${results.length} / ${turns.length} 手`;button.textContent='重新分析';update();showToast('KataGo 整局分析完成')}catch(error){$('analysisLabel').textContent='分析失败';$('analysisMeta').textContent=error.message;showToast(error.message)}finally{button.disabled=false;progress.className='';progress.style.width=analyses.size?`${analyses.size/(currentGame.moves.length+1)*100}%`:'0'}};
 document.addEventListener('keydown',e=>{if(e.target.matches('input,textarea'))return;if(e.key==='ArrowLeft')setMove(currentMove-1);if(e.key==='ArrowRight')setMove(currentMove+1);if(e.key===' ') {e.preventDefault();togglePlay()}});
 
-renderGames();update();
+renderGames();update();analyzeCurrentPosition();

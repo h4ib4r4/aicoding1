@@ -89,5 +89,13 @@
     return `${letters[x] || '?'}${size - y}`;
   }
 
-  return { BOARD_SIZE, emptyBoard, neighbors, groupAt, applyMove, replay, parseSgf, pointName };
+  function gtpPointToCoords(point, size = BOARD_SIZE) {
+    if (!point || point.toLowerCase() === 'pass') return { pass: true };
+    const letters = 'ABCDEFGHJKLMNOPQRSTUVWXYZ';
+    const x = letters.indexOf(point[0].toUpperCase());
+    const y = size - Number(point.slice(1));
+    return x < 0 || y < 0 || y >= size ? null : { x, y };
+  }
+
+  return { BOARD_SIZE, emptyBoard, neighbors, groupAt, applyMove, replay, parseSgf, pointName, gtpPointToCoords };
 });

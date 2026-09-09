@@ -98,35 +98,25 @@
             </div>
 
             <aside class="analysis-panel">
-              <div class="analysis-tabs"><button class="active" data-tab="ai">AI 分析</button><button data-tab="comment">评论 <span>3</span></button><button data-tab="info">信息</button></div>
+              <div class="analysis-tabs"><button class="active" data-tab="ai">AI 分析</button><button data-tab="info">棋局信息</button></div>
               <div id="aiTab" class="tab-content">
                 <div class="evaluation">
-                  <div class="eval-top"><span>局面评估 · 第 <b id="evalMove">38</b> 手</span><em class="status"><i></i>分析完成</em></div>
-                  <div class="eval-numbers"><div><small>黑棋胜率</small><strong id="evalBlack">43.2<sup>%</sup></strong></div><div class="score-lead"><span>白领先</span><b id="scoreLead">+3.4 目</b></div><div><small>白棋胜率</small><strong id="evalWhite">56.8<sup>%</sup></strong></div></div>
+                  <div class="eval-top"><span>局面评估 · 第 <b id="evalMove">38</b> 手</span><em class="status" id="engineStatus"><i></i>连接 KataGo</em></div>
+                  <div class="eval-numbers"><div><small>黑棋胜率</small><strong id="evalBlack">--<sup>%</sup></strong></div><div class="score-lead"><span id="leadLabel">等待分析</span><b id="scoreLead">-- 目</b></div><div><small>白棋胜率</small><strong id="evalWhite">--<sup>%</sup></strong></div></div>
                   <div class="winbar"><i id="blackBar"></i></div>
-                  <div class="swing down" id="swingText">↓ 较上一手 -12.6% · 疑问手</div>
+                  <div class="swing" id="swingText">正在读取本地 CUDA KataGo…</div>
                 </div>
 
                 <div class="candidate-section">
-                  <div class="subheading"><h3>AI 推荐</h3><span>访问 12.8k 次</span></div>
-                  <div id="candidateList" class="candidate-list"></div>
-                </div>
-
-                <div class="insight">
-                  <div class="insight-icon">✦</div>
-                  <div><strong>局面解读</strong><p id="insightText">黑棋实战在右边缓了一手，白棋抢到中央要点后建立优势。此处应先从左上角动出，保持全局主动。</p></div>
+                  <div class="subheading"><h3>AI 推荐</h3><span id="visitsLabel">等待引擎</span></div>
+                  <div id="candidateList" class="candidate-list"><div class="empty-analysis">分析后显示推荐着法</div></div>
                 </div>
 
                 <div class="analyze-box">
-                  <div><span id="analysisLabel">全局分析已完成</span><b id="analysisMeta">62 / 62 手</b></div>
+                  <div><span id="analysisLabel">等待本地引擎</span><b id="analysisMeta">KataGo</b></div>
                   <div class="analysis-progress"><i id="analysisProgress"></i></div>
-                  <button id="analyzeButton">重新分析</button>
+                  <button id="analyzeButton">分析整局</button>
                 </div>
-              </div>
-              <div id="commentTab" class="tab-content hidden">
-                <div class="comment-card"><b>第 18 手</b><p>这里的夹击很有气势，但下方还留有断点。</p><span>今天 10:24</span></div>
-                <div class="comment-card"><b>第 38 手</b><p>本局第一个明显的胜率转折点，建议重点研究 AI 变化。</p><span>今天 10:31</span></div>
-                <textarea placeholder="记录这一手的想法…"></textarea><button class="primary-btn">保存评论</button>
               </div>
               <div id="infoTab" class="tab-content hidden"><dl class="game-info"><dt>赛事</dt><dd>秋季升段赛</dd><dt>日期</dt><dd>2026-08-24</dd><dt>地点</dt><dd>杭州棋院</dd><dt>规则</dt><dd>中国规则</dd><dt>结果</dt><dd>白中盘胜</dd></dl></div>
             </aside>
