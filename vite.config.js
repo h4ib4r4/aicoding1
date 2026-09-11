@@ -9,6 +9,7 @@ export default defineConfig({
     closeBundle() {
       copyFileSync('app.js', 'dist/app.js');
       copyFileSync('core.js', 'dist/core.js');
+      copyFileSync('collection.js', 'dist/collection.js');
     }
   }]
 });

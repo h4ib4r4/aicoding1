@@ -20,13 +20,22 @@ const demoGames = [
 ];
 
 function loadLocal(key, fallback) { try { const value = JSON.parse(localStorage.getItem(key)); return value === null || value === undefined ? fallback : value; } catch { return fallback; } }
-const games = loadLocal('yijing.games', demoGames).map(game => {
+const savedGames = loadLocal('yijing.games', []);
+const collection = window.YijingCollection || [];
+const needsCollection = collection.length > 0 && !loadLocal('yijing.collection.danghu.v1', false);
+const libraryGames = needsCollection ? savedGames.filter(game => !demoGames.some(demo => demo.id === game.id && demo.black === game.black && demo.white === game.white && !game.sgfText && !game.imported)) : savedGames;
+if (needsCollection) {
+  localStorage.setItem('yijing.backup.before-danghu', JSON.stringify(savedGames));
+  for (const game of collection) if (!libraryGames.some(existing => existing.id === game.id || existing.sgfText === game.sgfText)) libraryGames.push(game);
+}
+const games = libraryGames.map(game => {
   if (game.sgfText) {
     try { return { ...game, ...parseSgf(game.sgfText), title: game.title, folder: game.folder, tag: game.tag, favorite: game.favorite, deleted: game.deleted }; } catch {}
   }
   return { ...game, moves: (game.moves || []).map(move => !move.pass && (move.x < 0 || move.y < 0 || move.x >= 19 || move.y >= 19) ? { color: move.color, pass: true } : move) };
 });
 const customFolders = loadLocal('yijing.folders', []);
+if (needsCollection && !customFolders.some(folder => folder.id === 'classic-danghu')) customFolders.push({id:'classic-danghu',name:'古谱 · 当湖十局'});
 const customTags = loadLocal('yijing.tags', []);
 
 let currentGame = games[0];
@@ -267,4 +276,5 @@ document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLower
 
 window.addEventListener('resize',()=>drawChart());
 const chartPanel=$('chart-panel');if(chartPanel)$('analysis-panel').appendChild(chartPanel);
-renderFolders();renderTags();renderGames();update();analyzeCurrentPosition();
+if (needsCollection && saveLibrary()) localStorage.setItem('yijing.collection.danghu.v1', 'true');
+renderFolders();renderTags();selectGame(currentGame.id);
