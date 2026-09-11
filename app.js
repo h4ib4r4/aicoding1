@@ -117,9 +117,15 @@ function renderGames(filter = '') {
     || (activeFolder === 'recent' && !game.deleted && recentIds.has(game.id))
     || (activeFolder === 'trash' && game.deleted)
     || (!['all','recent','trash'].includes(activeFolder) && !game.deleted && game.folder === activeFolder);
+  const resultColor = result => {
+    const value = String(result || '').trim().toUpperCase();
+    if (value.startsWith('B') || value.startsWith('黑')) return 'black';
+    if (value.startsWith('W') || value.startsWith('白')) return 'white';
+    return '';
+  };
   const visible = games.filter((g, index) => folderMatch(g, index)
     && [g.title,g.black,g.white,g.event,g.tag].join(' ').toLowerCase().includes(query)
-    && (!libraryFilter.result || g.result.startsWith(libraryFilter.result === 'black' ? '黑' : '白'))
+    && (!libraryFilter.result || resultColor(g.result) === libraryFilter.result)
     && (!libraryFilter.favorites || g.favorite));
   $('gameCount').textContent = visible.length;
   $('panelTitle').textContent = folderNames[activeFolder] || '棋谱';
@@ -222,7 +228,7 @@ function togglePlay(){if(playing){clearInterval(playing);playing=null;$('playBut
 
 $('searchInput').addEventListener('input',e=>renderGames(e.target.value));
 $('importButton').onclick=()=>$('fileInput').click();
-$('fileInput').onchange=async e=>{pendingImports=[];for(const file of e.target.files){try{const sgfText=await file.text(),parsed=parseSgf(sgfText);pendingImports.push({...parsed,sgfText,title:parsed.title==='导入的棋谱'?file.name.replace(/\.sgf$/i,''):parsed.title,fileName:file.name,folder:'mine'});}catch(err){showToast(`${file.name}: ${err.message}`)}}if(pendingImports.length)openGameModal('import');e.target.value=''};
+$('fileInput').onchange=async e=>{pendingImports=[];const fingerprints=new Set(games.map(game=>String(game.sgfText||'').replace(/\s+/g,'')));for(const file of e.target.files){try{const sgfText=await file.text(),fingerprint=sgfText.replace(/\s+/g,'');if(fingerprints.has(fingerprint)){showToast(file.name+': 棋谱已存在，已跳过');continue}fingerprints.add(fingerprint);const parsed=parseSgf(sgfText);pendingImports.push({...parsed,sgfText,title:parsed.title==='导入的棋谱'?file.name.replace(/\.sgf$/i,''):parsed.title,fileName:file.name,folder:'mine'});}catch(err){showToast(`${file.name}: ${err.message}`)}}if(pendingImports.length)openGameModal('import');e.target.value=''};
 $('editGameButton').onclick=()=>openGameModal('edit');
 $('exportButton').onclick=()=>{
   const esc=value=>String(value||'').replace(/\\/g,'\\\\').replace(/\]/g,'\\]').replace(/\[/g,'\\[').replace(/\r?\n/g,'\\n');
@@ -254,6 +260,6 @@ $('listViewButton').onclick=()=>{listMode='list';$('listViewButton').classList.a
 $('gridViewButton').onclick=()=>{listMode='grid';$('gridViewButton').classList.add('active');$('listViewButton').classList.remove('active');renderGames($('searchInput').value)};
 document.querySelectorAll('.chart-tabs button').forEach(button=>button.onclick=()=>{chartMode=button.dataset.chart;document.querySelectorAll('.chart-tabs button').forEach(item=>item.classList.toggle('active',item===button));$('chartTitle').textContent=chartMode==='winrate'?'胜率走势':'目差走势';$('chartLegend').innerHTML=`<i class="legend-black"></i>${chartMode==='winrate'?'黑棋胜率':'黑棋目差'}`;drawChart()});
 $('analyzeButton').onclick=async()=>{const button=$('analyzeButton'),progress=$('analysisProgress');button.disabled=true;$('analysisLabel').textContent='CUDA 正在分析整局…';$('analysisMeta').textContent='请稍候';progress.className='loading';try{const turns=Array.from({length:currentGame.moves.length+1},(_,i)=>i),results=await requestAnalysis(turns,settings.fullVisits);results.forEach(result=>analyses.set(result.turnNumber,result));$('analysisLabel').textContent='全局分析已完成';$('analysisMeta').textContent=`${results.length} / ${turns.length} 手`;button.textContent='重新分析';update();showToast('KataGo 整局分析完成')}catch(error){$('analysisLabel').textContent='分析失败';$('analysisMeta').textContent=error.message;showToast(error.message)}finally{button.disabled=false;progress.className='';progress.style.width=analyses.size?`${analyses.size/(currentGame.moves.length+1)*100}%`:'0';saveLibrary()}};
-document.addEventListener('keydown',e=>{if(e.target.matches('input,textarea'))return;if(e.key==='ArrowLeft')setMove(currentMove-1);if(e.key==='ArrowRight')setMove(currentMove+1);if(e.key===' ') {e.preventDefault();togglePlay()}});
+document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();$('searchInput').focus();$('searchInput').select();return}if(e.target.matches('input,textarea'))return;if(e.key==='ArrowLeft')setMove(currentMove-1);if(e.key==='ArrowRight')setMove(currentMove+1);if(e.key===' ') {e.preventDefault();togglePlay()}});
 
 renderFolders();renderTags();renderGames();update();analyzeCurrentPosition();
