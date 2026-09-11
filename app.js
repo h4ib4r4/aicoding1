@@ -168,8 +168,10 @@ function candidates(){return (currentAnalysis()?.moveInfos||[]).slice(0,3).map(i
 function toBlackWin(_result, rate){return rate*100}
 function renderCandidates(){const result=currentAnalysis();const moves=candidates();$('candidateList').innerHTML=moves.length?moves.map((c,i)=>`<div class="candidate ${i===0?'active':''}" data-x="${c.x}" data-y="${c.y}"><span class="candidate-index">${i+1}</span><div class="candidate-main"><b>${c.move}</b><span>${i?'候选变化':'KataGo 首选'} · ${c.visits||0} 次访问</span></div><div class="candidate-win"><b>${toBlackWin(result,c.winrate).toFixed(1)}%</b><span>${Number(c.scoreLead||0)>=0?'+':''}${Number(c.scoreLead||0).toFixed(1)} 目</span></div></div>`).join(''):'<div class="empty-analysis">分析后显示推荐着法</div>';document.querySelectorAll('.candidate').forEach(el=>el.onclick=()=>{mark={x:+el.dataset.x,y:+el.dataset.y};drawBoard();showToast(`已在棋盘标出候选点 ${pointName(mark.x,mark.y)}`)})}
 
+function resizeChartCanvas(){const rect=chartCanvas.getBoundingClientRect(),dpr=window.devicePixelRatio||1,width=Math.max(1,Math.round(rect.width)),height=Math.max(1,Math.round(rect.height));const pixelWidth=Math.round(width*dpr),pixelHeight=Math.round(height*dpr);if(chartCanvas.width!==pixelWidth||chartCanvas.height!==pixelHeight){chartCanvas.width=pixelWidth;chartCanvas.height=pixelHeight}chartCtx.setTransform(dpr,0,0,dpr,0,0);return {width,height}}
+
 function drawChart(){
-  const ctx=chartCtx,w=chartCanvas.width,h=chartCanvas.height,p={l:42,r:15,t:15,b:26},max=currentGame.moves.length;
+  const ctx=chartCtx,{width:w,height:h}=resizeChartCanvas(),p={l:42,r:15,t:15,b:26},max=currentGame.moves.length;
   ctx.clearRect(0,0,w,h);ctx.font='18px "Microsoft YaHei UI"';ctx.fillStyle='#929995';ctx.strokeStyle='#e7e7e2';ctx.lineWidth=1;
   const ticks=chartMode==='winrate'?[0,25,50,75,100]:[-20,-10,0,10,20];
   const toY=value=>chartMode==='winrate'?p.t+(100-value)/100*(h-p.t-p.b):p.t+(20-Math.max(-20,Math.min(20,value)))/40*(h-p.t-p.b);
@@ -263,4 +265,5 @@ document.querySelectorAll('.chart-tabs button').forEach(button=>button.onclick=(
 $('analyzeButton').onclick=async()=>{const button=$('analyzeButton'),progress=$('analysisProgress');button.disabled=true;$('analysisLabel').textContent='CUDA 正在分析整局…';$('analysisMeta').textContent='请稍候';progress.className='loading';try{const turns=Array.from({length:currentGame.moves.length+1},(_,i)=>i),results=await requestAnalysis(turns,settings.fullVisits);results.forEach(result=>analyses.set(result.turnNumber,result));$('analysisLabel').textContent='全局分析已完成';$('analysisMeta').textContent=`${results.length} / ${turns.length} 手`;button.textContent='重新分析';update();showToast('KataGo 整局分析完成')}catch(error){$('analysisLabel').textContent='分析失败';$('analysisMeta').textContent=error.message;showToast(error.message)}finally{button.disabled=false;progress.className='';progress.style.width=analyses.size?`${analyses.size/(currentGame.moves.length+1)*100}%`:'0';saveLibrary()}};
 document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();$('searchInput').focus();$('searchInput').select();return}if(e.key==='Escape'&&marking){marking=false;$('markButton').classList.remove('active');showToast('已退出标记模式');return}if(e.target.matches('input,textarea'))return;if(e.key==='ArrowLeft')setMove(currentMove-1);if(e.key==='ArrowRight')setMove(currentMove+1);if(e.key===' ') {e.preventDefault();togglePlay()}});
 
+window.addEventListener('resize',()=>drawChart());
 renderFolders();renderTags();renderGames();update();analyzeCurrentPosition();
