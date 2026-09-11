@@ -35,6 +35,7 @@ let playing = null;
 let showNumbers = true;
 let showHeat = true;
 let mark = null;
+let marking = false;
 let analyses = new Map();
 let analysisRequest = 0;
 let activeFolder = 'all';
@@ -140,7 +141,7 @@ function renderGames(filter = '') {
 }
 
 function selectGame(id) {
-  currentGame = games.find(g => g.id === id) || games[0]; currentMove = Math.min(38,currentGame.moves.length); mark = null; analyses = new Map(); pendingJudgementMove = null; lastSpokenMove = null;
+  currentGame = games.find(g => g.id === id) || games[0]; currentMove = Math.min(38,currentGame.moves.length); mark = null; marking = false; $('markButton').classList.remove('active'); analyses = new Map(); pendingJudgementMove = null; lastSpokenMove = null;
   $('gameTitle').textContent=currentGame.title; $('blackName').innerHTML=`${currentGame.black} <small>${currentGame.blackRank}</small>`; $('whiteName').innerHTML=`${currentGame.white} <small>${currentGame.whiteRank}</small>`;
   $('favoriteButton').textContent=currentGame.favorite?'★':'☆';$('favoriteButton').classList.toggle('active',Boolean(currentGame.favorite));
   $('moveSlider').max=currentGame.moves.length; $('moveTotal').textContent=currentGame.moves.length;
@@ -253,13 +254,13 @@ document.querySelectorAll('[data-close]').forEach(button=>button.onclick=()=>clo
 document.querySelectorAll('.modal-backdrop').forEach(backdrop=>backdrop.onclick=e=>{if(e.target===backdrop)closeModal(backdrop.id)});
 $('moveSlider').oninput=e=>setMove(e.target.value);$('firstButton').onclick=()=>setMove(0);$('prevButton').onclick=()=>setMove(currentMove-1);$('nextButton').onclick=()=>setMove(currentMove+1);$('lastButton').onclick=()=>setMove(currentGame.moves.length);$('playButton').onclick=togglePlay;
 $('speedSelect').onchange=()=>{if(playing){togglePlay();togglePlay()}};
-$('numberToggle').onclick=e=>{showNumbers=!showNumbers;e.currentTarget.classList.toggle('active',showNumbers);drawBoard()};$('heatToggle').onclick=e=>{showHeat=!showHeat;e.currentTarget.classList.toggle('active',showHeat);drawBoard()};$('markButton').onclick=()=>showToast('点击棋盘交叉点添加三角标记');
+$('numberToggle').onclick=e=>{showNumbers=!showNumbers;e.currentTarget.classList.toggle('active',showNumbers);drawBoard()};$('heatToggle').onclick=e=>{showHeat=!showHeat;e.currentTarget.classList.toggle('active',showHeat);drawBoard()};$('markButton').onclick=e=>{marking=!marking;e.currentTarget.classList.toggle('active',marking);showToast(marking?'请选择棋盘交叉点':'已退出标记模式')};
 $('soundButton').onclick=e=>{settings.soundEnabled=!settings.soundEnabled;e.currentTarget.classList.toggle('active',settings.soundEnabled);e.currentTarget.title=settings.soundEnabled?'关闭声音':'开启声音';saveLibrary();if(settings.soundEnabled)playStoneSound(false)};
-boardCanvas.onclick=e=>{const rect=boardCanvas.getBoundingClientRect(),scale=boardCanvas.width/rect.width,step=(boardCanvas.width-86)/18;const x=Math.round((e.offsetX*scale-43)/step),y=Math.round((e.offsetY*scale-43)/step);if(x>=0&&x<19&&y>=0&&y<19){mark={x,y};drawBoard();showToast(`已标记 ${pointName(x,y)}`)}};
+boardCanvas.onclick=e=>{if(!marking)return;const rect=boardCanvas.getBoundingClientRect(),scale=boardCanvas.width/rect.width,step=(boardCanvas.width-86)/18;const x=Math.round((e.offsetX*scale-43)/step),y=Math.round((e.offsetY*scale-43)/step);if(x>=0&&x<19&&y>=0&&y<19){mark={x,y};marking=false;$('markButton').classList.remove('active');drawBoard();showToast(`已标记 ${pointName(x,y)}`)}};
 $('listViewButton').onclick=()=>{listMode='list';$('listViewButton').classList.add('active');$('gridViewButton').classList.remove('active');renderGames($('searchInput').value)};
 $('gridViewButton').onclick=()=>{listMode='grid';$('gridViewButton').classList.add('active');$('listViewButton').classList.remove('active');renderGames($('searchInput').value)};
 document.querySelectorAll('.chart-tabs button').forEach(button=>button.onclick=()=>{chartMode=button.dataset.chart;document.querySelectorAll('.chart-tabs button').forEach(item=>item.classList.toggle('active',item===button));$('chartTitle').textContent=chartMode==='winrate'?'胜率走势':'目差走势';$('chartLegend').innerHTML=`<i class="legend-black"></i>${chartMode==='winrate'?'黑棋胜率':'黑棋目差'}`;drawChart()});
 $('analyzeButton').onclick=async()=>{const button=$('analyzeButton'),progress=$('analysisProgress');button.disabled=true;$('analysisLabel').textContent='CUDA 正在分析整局…';$('analysisMeta').textContent='请稍候';progress.className='loading';try{const turns=Array.from({length:currentGame.moves.length+1},(_,i)=>i),results=await requestAnalysis(turns,settings.fullVisits);results.forEach(result=>analyses.set(result.turnNumber,result));$('analysisLabel').textContent='全局分析已完成';$('analysisMeta').textContent=`${results.length} / ${turns.length} 手`;button.textContent='重新分析';update();showToast('KataGo 整局分析完成')}catch(error){$('analysisLabel').textContent='分析失败';$('analysisMeta').textContent=error.message;showToast(error.message)}finally{button.disabled=false;progress.className='';progress.style.width=analyses.size?`${analyses.size/(currentGame.moves.length+1)*100}%`:'0';saveLibrary()}};
-document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();$('searchInput').focus();$('searchInput').select();return}if(e.target.matches('input,textarea'))return;if(e.key==='ArrowLeft')setMove(currentMove-1);if(e.key==='ArrowRight')setMove(currentMove+1);if(e.key===' ') {e.preventDefault();togglePlay()}});
+document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();$('searchInput').focus();$('searchInput').select();return}if(e.key==='Escape'&&marking){marking=false;$('markButton').classList.remove('active');showToast('已退出标记模式');return}if(e.target.matches('input,textarea'))return;if(e.key==='ArrowLeft')setMove(currentMove-1);if(e.key==='ArrowRight')setMove(currentMove+1);if(e.key===' ') {e.preventDefault();togglePlay()}});
 
 renderFolders();renderTags();renderGames();update();analyzeCurrentPosition();
