@@ -60,18 +60,55 @@ Demo 默认连接本机 `G:\Edge_download\KataGo` 下的 TensorRT / CUDA KataGo�
 
 落子与提子声用 Web Audio 实时合成，不依赖音频文件：极短的宽带噪声瞬态给「清脆」，中频谐振给木质厚度，低频托底给「沉」，每次落子微调音高与衰减避免机械重复。提子是数颗子依次被拎起的连击。音量走统一的 master gain，随设置里的音量滑块变化。
 
-## Tauri 桌面版
+## 桌面版（本地运行）
 
-正式版桌面壳位于 `src-tauri`，使用 Rust、SQLite/FTS5 和 Tauri 2。开发运行：
+`src-tauri` 下的 Tauri 2 壳把同一份界面装成真正的本机应用：独立窗口、直接管理本机 KataGo 进程、棋谱落在应用数据目录，不再需要浏览器和本地 HTTP 服务。
 
 ```powershell
+# 开发运行（带热更新）
 npm run tauri dev
+
+# 构建可双击运行的桌面应用
+npm run tauri build -- --no-bundle
+# 产物：src-tauri\target\release\yijing.exe
+
+# 绿色便携版：应用与引擎装进同一目录，整个文件夹可拷到别的机器
+node scripts/package-portable.mjs
 ```
 
-生成 Windows 可执行文件：
+浏览器模式仍由 `npm start` 提供，方便快速改界面。两种模式共用同一份 `app.js`，启动时按 `window.__TAURI__` 是否存在自行选择后端。
 
-```powershell
-npm run tauri -- build --debug --no-bundle
+### 引擎路径
+
+桌面版按下列顺序解析 KataGo 位置，先命中先用：
+
+1. 环境变量 `KATAGO_EXE` / `KATAGO_MODEL` / `KATAGO_CONFIG`，或只给一个 `KATAGO_DIR` 由目录自动推导
+2. 与 `yijing.exe` 同目录的 `katago.json`（从 `katago.json.example` 复制一份改）
+3. 本机默认安装位置 `G:\Edge_download\KataGo`
+
+`katago.json` 中写相对路径时以 exe 所在目录为基准，因此便携版换盘符、换用户名都不会失效。分析面板右上角显示引擎的真实状态；路径不对时会直接列出缺的是哪个文件、该改哪一个配置文件，而不是只说一句「不可用」。
+
+### 数据存放
+
+棋谱库、文件夹、标签与设置写入应用数据目录（`%APPDATA%\com.yijing.goreview\library.json`），浏览器里的 localStorage 仍保留一份。首次启动会把浏览器已有的棋谱迁移过去，此后以本地文件为准。写入采用临时文件加替换，避免中途意外损坏原数据；文件解析失败时会改名为 `library.json.broken` 保留现场再重开，不会静默清空。
+
+### 引擎调度的两点考虑
+
+- **不占 UI 线程**：模型加载（首次 TensorRT 约 30–90 秒）和整局分析都很慢，分析命令走独立阻塞线程，KataGo 的标准输出由单独线程按请求 id 派发，每个请求自带超时；窗口在分析期间照常响应。
+- **进程不残留**：窗口关闭时主动回收 KataGo 进程，否则 Windows 上会留下一个占着显存的 `katago.exe`。
+
+### WebView2 启动参数（别随手删）
+
+`tauri.conf.json` 中窗口的 `additionalBrowserArgs` 不是可选调优，而是必需项：
+
+```
+--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --no-sandbox --disable-gpu
 ```
 
-桌面后端已经提供棋谱查询、SGF 去重导入、自定义文件夹、重命名/移动分类以及 KataGo 分析命令。浏览器模式仍由 `npm start` 提供，便于快速调试界面。
+- **`--no-sandbox` 与 `--disable-gpu` 缺一不可**。少了任意一个，在远程桌面、虚拟机或受限会话下会出现「窗口一切正常、客户区整片空白」：进程活着、标题栏画得出来、资源也全都取得到（定位时确认过资产解析器能返回全部文件、窗口 URL 也确实是 `http://tauri.localhost/`），唯独网页内容渲染不出来。问题出在 WebView2 的渲染进程，不在资源或路由。
+- `--disable-gpu` 让 WebView2 走软件渲染。棋盘用 Canvas 2D 绘制，软件渲染完全够用；本机 GPU 正常又想换回硬件加速，去掉该参数重新构建即可。
+- 第一组 `--disable-features=...` 是 wry 的默认值（去掉 Edge 迷你看板与 SmartScreen）。**一旦自定义这个字段，默认值会被整个覆盖**，必须自己补上。
+
+### 排障
+
+发布版没有控制台（`main.rs` 设了 `windows_subsystem = "windows"`），因此页面加载、棋谱库读写、引擎状态与预热结果都会写进应用数据目录下的 `yijing.log`。遇到「窗口打开了但没内容」之类的现象，先看这个文件：有日志说明前端已执行，空白只剩渲染层的问题。

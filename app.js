@@ -20,6 +20,26 @@ const demoGames = [
 ];
 
 function loadLocal(key, fallback) { try { const value = JSON.parse(localStorage.getItem(key)); return value === null || value === undefined ? fallback : value; } catch { return fallback; } }
+
+// ---------------------------------------------------------------------------
+// 运行时适配层：同一份界面既能跑在浏览器里（走 HTTP 后端），也能跑成桌面应用。
+// 桌面版把棋谱库落到应用数据目录，并直接管理本机 KataGo 进程。
+// ---------------------------------------------------------------------------
+const desktopCore = window.__TAURI__?.core?.invoke ? window.__TAURI__.core : null;
+const isDesktop = Boolean(desktopCore);
+function desktopInvoke(command, args) { return desktopCore.invoke(command, args); }
+// 桌面版没有控制台，关键节点与异常写进应用数据目录的 yijing.log，出问题时有据可查
+function desktopLog(text) { if (isDesktop) desktopInvoke('log_line', { text: String(text) }).catch(() => {}); }
+if (isDesktop) {
+  window.addEventListener('error', event => desktopLog(`未捕获错误: ${event.message} @ ${event.filename}:${event.lineno}`));
+  window.addEventListener('unhandledrejection', event => desktopLog(`未处理的拒绝: ${event.reason?.message || event.reason}`));
+  desktopLog(`页面加载 · Tauri 桥已注入 · UA ${navigator.userAgent}`);
+}
+// 桌面版先别急着分析：等应用数据目录里的棋谱库读完，否则会拿着旧棋谱白跑一次引擎
+let libraryReady = !isDesktop;
+// 默认放行：只有确认引擎确实不可用才拦下自动分析，免得每次切棋谱都弹一遍错误
+let engineReady = true;
+
 const savedGames = loadLocal('yijing.games', []);
 const collection = window.YijingCollection || [];
 const needsCollection = collection.length > 0 && !loadLocal('yijing.collection.danghu.v1', false);
@@ -39,7 +59,8 @@ function backfillRuleset(list) {
   return changed;
 }
 const rulesetBackfilled = backfillRuleset(libraryGames);
-const games = libraryGames.map(game => {
+// 归一化抽成独立函数：首次载入与「从本地文件热更新」走同一条路径，两边不会长出分歧
+function normalizeGame(game) {
   if (game.sgfText) {
     try {
       const parsed = parseSgf(game.sgfText);
@@ -48,7 +69,8 @@ const games = libraryGames.map(game => {
     } catch {}
   }
   return { ...game, ruleset: game.ruleset || '', moves: (game.moves || []).map(move => !move.pass && (move.x < 0 || move.y < 0 || move.x >= 19 || move.y >= 19) ? { color: move.color, pass: true } : move) };
-});
+}
+const games = libraryGames.map(normalizeGame);
 const customFolders = loadLocal('yijing.folders', []);
 if (needsCollection && !customFolders.some(folder => folder.id === 'classic-danghu')) customFolders.push({id:'classic-danghu',name:'古谱 · 当湖十局'});
 const customTags = loadLocal('yijing.tags', []);
@@ -85,7 +107,27 @@ const chartCanvas = $('winChart');
 const chartCtx = chartCanvas.getContext('2d');
 
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char])); }
-function saveLibrary() { try { localStorage.setItem('yijing.games', JSON.stringify(games)); localStorage.setItem('yijing.folders', JSON.stringify(customFolders)); localStorage.setItem('yijing.tags', JSON.stringify(customTags)); localStorage.setItem('yijing.settings', JSON.stringify(settings)); return true; } catch { showToast('本地存储空间不足，修改仅在本次打开期间有效'); return false; } }
+function librarySnapshot() { return { version: 1, savedAt: new Date().toISOString(), games, folders: customFolders, tags: customTags, settings }; }
+function saveLibrary() {
+  let ok = true;
+  try {
+    localStorage.setItem('yijing.games', JSON.stringify(games));
+    localStorage.setItem('yijing.folders', JSON.stringify(customFolders));
+    localStorage.setItem('yijing.tags', JSON.stringify(customTags));
+    localStorage.setItem('yijing.settings', JSON.stringify(settings));
+  } catch { showToast('本地存储空间不足，修改仅在本次打开期间有效'); ok = false; }
+  // 桌面版再落一份到应用数据目录：清理缓存、换浏览器都不会丢棋谱。
+  // 写盘按 400ms 合并，连续编辑不会每一下都碰磁盘。
+  if (isDesktop) {
+    clearTimeout(saveLibrary.timer);
+    saveLibrary.timer = setTimeout(() => {
+      desktopInvoke('library_save', { data: librarySnapshot() })
+        .then(() => desktopLog(`已保存本地棋谱库：${games.length} 局`))
+        .catch(error => { desktopLog(`保存本地棋谱库失败：${error}`); showToast(`保存到本地失败：${error}`); });
+    }, 400);
+  }
+  return ok;
+}
 function folderOptions(selected = 'mine') { return [{id:'mine',name:'我的对局'},{id:'professional',name:'职业棋谱'},...customFolders].map(folder=>`<option value="${escapeHtml(folder.id)}" ${folder.id===selected?'selected':''}>${escapeHtml(folder.name)}</option>`).join(''); }
 function allTags() { return ['布局研究','关键对局','待复盘',...customTags].filter((tag,index,array)=>array.indexOf(tag)===index); }
 function tagOptions(selected = '') { return ['<option value="">无标签</option>',...allTags().map(tag=>`<option value="${escapeHtml(tag)}" ${tag===selected?'selected':''}>${escapeHtml(tag)}</option>`)].join(''); }
@@ -195,7 +237,8 @@ function renderGames(filter = '') {
 
 function selectGame(id) {
   currentGame = games.find(g => g.id === id) || games[0]; currentMove = Math.min(38,currentGame.moves.length); mark = null; marking = false; $('markButton').classList.remove('active'); analyses = new Map(); pendingJudgementMove = null; lastSpokenMove = null;
-  $('gameTitle').textContent=currentGame.title; $('blackName').innerHTML=`${currentGame.black} <small>${currentGame.blackRank}</small>`; $('whiteName').innerHTML=`${currentGame.white} <small>${currentGame.whiteRank}</small>`;
+  $('gameTitle').textContent=currentGame.title; if(isDesktop)desktopInvoke('set_window_title',{title:`${currentGame.title} · 弈境`}).catch(()=>{});
+  $('blackName').innerHTML=`${currentGame.black} <small>${currentGame.blackRank}</small>`; $('whiteName').innerHTML=`${currentGame.white} <small>${currentGame.whiteRank}</small>`;
   const gameMeta=[currentGame.event,currentGame.date,currentGame.result].filter(Boolean).join(' · ');
   $('gameMeta').textContent=gameMeta;
   const metaSep=document.querySelector('.title-block .sep'); if(metaSep)metaSep.style.display=gameMeta?'':'none';
@@ -488,8 +531,37 @@ function speakJudgement(result) {
   speechSynthesis.cancel(); speechSynthesis.speak(utterance); lastSpokenMove = currentMove;
 }
 
+// 桌面版能问到引擎的真实处境：路径缺失要直接说清缺什么、去哪儿改，
+// 否则用户只会看到一句「引擎不可用」而无从下手。
+function setEngineLabel(state, detail = '') {
+  const el = $('engineStatus');
+  if (!el) return;
+  const map = {
+    ready: ['status', '引擎就绪'],
+    loading: ['status', '模型加载中'],
+    analyzing: ['status', 'CUDA 分析中'],
+    stopped: ['status', '引擎待启动'],
+    unavailable: ['status error', '引擎未就绪'],
+    failed: ['status error', '分析失败']
+  };
+  const [className, text] = map[state] || map.stopped;
+  el.className = className;
+  el.innerHTML = `<i></i>${text}`;
+  el.title = detail;
+}
+async function refreshEngineStatus() {
+  if (!isDesktop) return null;
+  try {
+    const status = await desktopInvoke('katago_status');
+    const detail = status.available ? `后端 ${status.backend} · 路径来源：${status.source}` : `缺少 ${status.missing.join('；')}。请在 ${status.configFile} 中填写正确路径`;
+    setEngineLabel(status.state, detail);
+    engineReady = status.available === true;
+    if (!engineReady) $('swingText').textContent = `未找到 KataGo：${status.missing[0] || '运行文件缺失'}`;
+    return status;
+  } catch { return null; }
+}
 async function requestAnalysis(turns,maxVisits){const rules=resolveRules(currentGame);const request={moves:currentGame.moves,initialStones:currentGame.setup||[],analyzeTurns:turns,maxVisits,rules:rules.rules,komi:rules.komi};if(window.__TAURI__?.core?.invoke)return window.__TAURI__.core.invoke('analyze_position',{request});const response=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)});const body=await response.json();if(!response.ok)throw new Error(body.error||'KataGo 分析失败');return body.results}
-async function analyzeCurrentPosition(){const token=++analysisRequest;$('engineStatus').className='status';$('engineStatus').innerHTML='<i></i>CUDA 分析中';$('swingText').textContent='正在等待本地 KataGo…';try{const results=await requestAnalysis([currentMove],settings.positionVisits);if(token!==analysisRequest)return;results.forEach(result=>analyses.set(result.turnNumber,result));$('engineStatus').innerHTML='<i></i>TensorRT / CUDA';renderAnalysis();drawBoard();drawChart();if(pendingJudgementMove===currentMove){speakJudgement(analyses.get(currentMove));pendingJudgementMove=null}}catch(error){if(token!==analysisRequest)return;$('engineStatus').className='status error';$('engineStatus').innerHTML='<i></i>引擎不可用';$('swingText').textContent=error.message;showToast(error.message)}}
+async function analyzeCurrentPosition(){if(!libraryReady||!engineReady)return;const token=++analysisRequest;setEngineLabel('analyzing');$('swingText').textContent='正在等待本地 KataGo…';try{const results=await requestAnalysis([currentMove],settings.positionVisits);if(token!==analysisRequest)return;results.forEach(result=>analyses.set(result.turnNumber,result));setEngineLabel('ready');renderAnalysis();drawBoard();drawChart();if(pendingJudgementMove===currentMove){speakJudgement(analyses.get(currentMove));pendingJudgementMove=null}}catch(error){if(token!==analysisRequest)return;setEngineLabel('failed',error.message);$('swingText').textContent=error.message;showToast(error.message);refreshEngineStatus()}}
 
 function setMove(value){const next=Math.max(0,Math.min(Number(value),currentGame.moves.length));const forward=next===currentMove+1;if(forward){playStoneSound(capturedStones(currentGame.moves,next,19,currentGame.setup||[])>0)}currentMove=next;pendingJudgementMove=forward?next:null;update();if(forward&&analyses.has(currentMove)){speakJudgement(analyses.get(currentMove));pendingJudgementMove=null}clearTimeout(setMove.timer);setMove.timer=setTimeout(()=>{if(!analyses.has(currentMove))analyzeCurrentPosition()},180)}
 function togglePlay(){if(playing){clearInterval(playing);playing=null;$('playButton').textContent='▶';return}if(currentMove>=currentGame.moves.length)currentMove=0;$('playButton').textContent='Ⅱ';playing=setInterval(()=>{if(currentMove>=currentGame.moves.length){togglePlay();return}setMove(currentMove+1)},Number($('speedSelect').value))}
@@ -695,3 +767,54 @@ window.addEventListener('resize',()=>{applyLayout();drawBoard();drawChart()});
 if (needsCollection && saveLibrary()) localStorage.setItem('yijing.collection.danghu.v1', 'true');
 else if (rulesetBackfilled) saveLibrary();
 renderFolders();renderTags();setShowNumbers(showNumbers,false);setShowHeat(showHeat,false);selectGame(currentGame.id);initLayers();activity();
+
+// ---------------------------------------------------------------------------
+// 桌面版收尾：读本地棋谱库 → 首次运行做迁移 → 查引擎状态 → 空闲时预热模型
+// ---------------------------------------------------------------------------
+function applyLibrary(payload) {
+  let changed = false;
+  if (Array.isArray(payload.games) && payload.games.length) { games.length = 0; for (const game of payload.games) games.push(normalizeGame(game)); changed = true; }
+  if (Array.isArray(payload.folders) && payload.folders.length) { customFolders.length = 0; customFolders.push(...payload.folders); changed = true; }
+  if (Array.isArray(payload.tags) && payload.tags.length) { customTags.length = 0; customTags.push(...payload.tags); changed = true; }
+  if (payload.settings && typeof payload.settings === 'object') { settings = { ...settings, ...payload.settings }; showNumbers = settings.showNumbers !== false; showHeat = settings.showHeat !== false; changed = true; }
+  if (!changed) return false;
+  renderFolders(); renderTags(); renderRules(); setShowNumbers(showNumbers, false); setShowHeat(showHeat, false);
+  const visible = renderGames($('searchInput').value);
+  currentGame = games.find(game => game.id === currentGame?.id) || visible[0] || games[0];
+  if (currentGame) selectGame(currentGame.id);
+  return true;
+}
+
+async function bootstrapDesktop() {
+  if (!isDesktop) { desktopLog('非桌面环境，跳过本地棋谱库'); return; }
+  desktopLog(`桌面环境 · 内存中已有 ${games.length} 局棋谱`);
+  let loaded = false;
+  try {
+    const payload = await desktopInvoke('library_load');
+    desktopLog(payload ? `读到本地棋谱库：${payload.games?.length || 0} 局` : '本地棋谱库不存在，按首次运行处理');
+    libraryReady = true;
+    if (payload) loaded = applyLibrary(payload);
+  } catch (error) { libraryReady = true; desktopLog(`读取本地棋谱库失败：${error}`); showToast(String(error)); }
+  if (!loaded) {
+    // 首次运行：把浏览器里已有的棋谱搬进应用数据目录，此后以本地文件为准
+    saveLibrary();
+    selectGame(currentGame.id);
+    showToast('棋谱库已保存到本机应用数据目录');
+  }
+  refreshEngineStatus().then(() => { desktopLog(`引擎状态：available=${engineReady}`); if (engineReady) analyzeCurrentPosition(); });
+  // 空闲时把模型装进显存，第一次分析就不必干等
+  setTimeout(() => {
+    desktopInvoke('warmup_engine')
+      .then(() => { desktopLog('引擎预热完成'); return refreshEngineStatus(); })
+      .catch(error => { desktopLog(`引擎预热失败：${error}`); setEngineLabel('unavailable', String(error)); });
+  }, 2500);
+}
+
+// 桌面端不该有网页味：屏蔽右键菜单与刷新快捷键，避免误触丢掉当前局面
+if (isDesktop) {
+  document.addEventListener('contextmenu', event => event.preventDefault());
+  document.addEventListener('keydown', event => {
+    if (event.key === 'F5' || ((event.ctrlKey || event.metaKey) && ['r', 'R', 'p', 'P'].includes(event.key))) event.preventDefault();
+  });
+}
+bootstrapDesktop();

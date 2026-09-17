@@ -1,0 +1,6 @@
+{
+  "_说明": "把本文件复制为 katago.json，与 弈境.exe 放在同一目录，即可指定 KataGo 的位置。",
+  "executable": "G:/Edge_download/KataGo/katago.exe",
+  "model": "G:/Edge_download/KataGo/kata1-tf3-b11c768-s11001M-d5973M.bin.gz",
+  "config": "G:/Edge_download/KataGo/analysis_example.cfg"
+}
