@@ -4,7 +4,27 @@
 
 ## 弈境 Demo
 
-这是一个根据《轻量化技术方案》制作的围棋棋谱管理与 AI 复盘交互原型，包含棋谱搜索、SGF 导入、棋盘播放、落点标记、模拟 AI 推荐与胜率走势。
+这是一个根据《[轻量化技术方案](docs/轻量化技术方案.md)》制作的围棋棋谱管理与 AI 复盘交互原型，包含棋谱搜索、SGF 导入、棋盘播放、落点标记、模拟 AI 推荐与胜率走势。
+
+## 文档与目录
+
+| 想了解 | 去哪看 |
+| --- | --- |
+| 项目现状、历次改动、踩过的坑、遗留事项 | [`docs/交接说明.md`](docs/交接说明.md) |
+| 需求条目与实现状态对照 | [`docs/需求清单.md`](docs/需求清单.md) |
+| 最初的设计方案 | [`docs/轻量化技术方案.md`](docs/轻量化技术方案.md) |
+| 验收脚本（无头 Chrome CDP 数值断言） | [`scripts/verify/`](scripts/verify) |
+
+```
+├── app.js / core.js / collection.js / index.html / styles.css   前端（两种宿主共用）
+├── server.js / katago.js                                        浏览器版后端（本地 HTTP + KataGo）
+├── src-tauri/                                                   桌面版（Tauri 2 + Rust + SQLite）
+├── test/                                                        测试（node --test / cargo test）
+├── scripts/  package-portable.mjs 打便携版 · verify/ 验收脚本
+├── docs/                                                        文档
+├── data/sgf/danghu/                                             内置的十局当湖十局古谱
+└── .workbuddy/                                                  本地工作区（memory/probes/shots/tmp，不进 git）
+```
 
 ```powershell
 npm start
