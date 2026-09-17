@@ -59,6 +59,9 @@ struct AnalysisRequest {
     initial_stones: Vec<MoveInput>,
     analyze_turns: Vec<u32>,
     max_visits: Option<u32>,
+    /// 棋谱自带的规则与贴目；古谱（明清规则）为贴 0 目，缺省时按现代中国规则 7.5 目。
+    rules: Option<String>,
+    komi: Option<f64>,
 }
 
 struct EngineProcess {
@@ -373,8 +376,8 @@ fn analyze_position(
         "id": id,
         "moves": moves,
         "initialStones": initial_stones,
-        "rules": "chinese",
-        "komi": 7.5,
+        "rules": request.rules.as_deref().unwrap_or("chinese"),
+        "komi": request.komi.unwrap_or(7.5),
         "boardXSize": 19,
         "boardYSize": 19,
         "analyzeTurns": request.analyze_turns,

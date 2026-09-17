@@ -1,4 +1,4 @@
-const { replay, capturedStones, parseSgf, pointName, gtpPointToCoords } = window.YijingCore;
+const { replay, capturedStones, parseSgf, pointName, gtpPointToCoords, groupCounts, groupTaxAdjustment, resolveRules } = window.YijingCore;
 
 const baseMoves = [
   [3,15],[15,3],[15,15],[3,3],[5,2],[2,5],[16,6],[16,10],[13,16],[10,16],
@@ -28,11 +28,26 @@ if (needsCollection) {
   localStorage.setItem('yijing.backup.before-danghu', JSON.stringify(savedGames));
   for (const game of collection) if (!libraryGames.some(existing => existing.id === game.id || existing.sgfText === game.sgfText)) libraryGames.push(game);
 }
+// 老版本存下来的棋谱没有规则元数据，按 id/原文从内置数据回填，否则古谱会被当成现代规则评估
+function backfillRuleset(list) {
+  let changed = false;
+  for (const game of list) {
+    if (game.ruleset) continue;
+    const source = collection.find(entry => entry.id === game.id || (entry.sgfText && entry.sgfText === game.sgfText));
+    if (source?.ruleset) { game.ruleset = source.ruleset; changed = true; }
+  }
+  return changed;
+}
+const rulesetBackfilled = backfillRuleset(libraryGames);
 const games = libraryGames.map(game => {
   if (game.sgfText) {
-    try { return { ...game, ...parseSgf(game.sgfText), title: game.title, folder: game.folder, tag: game.tag, favorite: game.favorite, deleted: game.deleted }; } catch {}
+    try {
+      const parsed = parseSgf(game.sgfText);
+      return { ...game, ...parsed, title: game.title, folder: game.folder, tag: game.tag, favorite: game.favorite, deleted: game.deleted,
+        ruleset: game.ruleset || parsed.ruleset || '', komi: game.komi === undefined || game.komi === null ? parsed.komi : game.komi };
+    } catch {}
   }
-  return { ...game, moves: (game.moves || []).map(move => !move.pass && (move.x < 0 || move.y < 0 || move.x >= 19 || move.y >= 19) ? { color: move.color, pass: true } : move) };
+  return { ...game, ruleset: game.ruleset || '', moves: (game.moves || []).map(move => !move.pass && (move.x < 0 || move.y < 0 || move.x >= 19 || move.y >= 19) ? { color: move.color, pass: true } : move) };
 });
 const customFolders = loadLocal('yijing.folders', []);
 if (needsCollection && !customFolders.some(folder => folder.id === 'classic-danghu')) customFolders.push({id:'classic-danghu',name:'古谱 · 当湖十局'});
@@ -71,6 +86,32 @@ function saveLibrary() { try { localStorage.setItem('yijing.games', JSON.stringi
 function folderOptions(selected = 'mine') { return [{id:'mine',name:'我的对局'},{id:'professional',name:'职业棋谱'},...customFolders].map(folder=>`<option value="${escapeHtml(folder.id)}" ${folder.id===selected?'selected':''}>${escapeHtml(folder.name)}</option>`).join(''); }
 function allTags() { return ['布局研究','关键对局','待复盘',...customTags].filter((tag,index,array)=>array.indexOf(tag)===index); }
 function tagOptions(selected = '') { return ['<option value="">无标签</option>',...allTags().map(tag=>`<option value="${escapeHtml(tag)}" ${tag===selected?'selected':''}>${escapeHtml(tag)}</option>`)].join(''); }
+
+// 还棋头是终局结算规则，只在棋谱记录的终局位置上算一次，不混进逐手曲线
+const taxCache = new Map();
+function gameGroupTax(game) {
+  if (!game || !resolveRules(game).groupTax || !Array.isArray(game.moves) || !game.moves.length) return null;
+  if (!taxCache.has(game.id)) {
+    const board = replay(game.moves, game.moves.length, 19, game.setup || []);
+    taxCache.set(game.id, { counts: groupCounts(board), adjustment: groupTaxAdjustment(board) });
+  }
+  return taxCache.get(game.id);
+}
+
+function renderRules() {
+  const rules = resolveRules(currentGame);
+  const historical = rules.id !== 'modern';
+  const chip = $('ruleChip');
+  chip.textContent = rules.name;
+  chip.title = rules.note;
+  chip.classList.toggle('hidden', !historical);
+  $('chartRuleNote').textContent = historical ? `· ${rules.name} · 贴 ${rules.komi} 目 · 不含还棋头` : '';
+  const note = $('taxNote');
+  const tax = gameGroupTax(currentGame);
+  if (!tax) { note.classList.add('hidden'); note.textContent = ''; return; }
+  note.classList.remove('hidden');
+  note.textContent = `终局还棋头 黑 ${tax.adjustment >= 0 ? '+' : ''}${tax.adjustment} 目 · 黑 ${tax.counts.B} 块 / 白 ${tax.counts.W} 块`;
+}
 
 function renderTags() {
   const colors=['green','orange','blue'];
@@ -154,6 +195,7 @@ function selectGame(id) {
   $('gameTitle').textContent=currentGame.title; $('blackName').innerHTML=`${currentGame.black} <small>${currentGame.blackRank}</small>`; $('whiteName').innerHTML=`${currentGame.white} <small>${currentGame.whiteRank}</small>`;
   $('favoriteButton').textContent=currentGame.favorite?'★':'☆';$('favoriteButton').classList.toggle('active',Boolean(currentGame.favorite));
   $('moveSlider').max=currentGame.moves.length; $('moveTotal').textContent=currentGame.moves.length;
+  renderRules();
   renderGames($('searchInput').value); update(); analyzeCurrentPosition();
 }
 
@@ -232,7 +274,7 @@ function speakJudgement(result) {
   speechSynthesis.cancel(); speechSynthesis.speak(utterance); lastSpokenMove = currentMove;
 }
 
-async function requestAnalysis(turns,maxVisits){const request={moves:currentGame.moves,initialStones:currentGame.setup||[],analyzeTurns:turns,maxVisits};if(window.__TAURI__?.core?.invoke)return window.__TAURI__.core.invoke('analyze_position',{request});const response=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)});const body=await response.json();if(!response.ok)throw new Error(body.error||'KataGo 分析失败');return body.results}
+async function requestAnalysis(turns,maxVisits){const rules=resolveRules(currentGame);const request={moves:currentGame.moves,initialStones:currentGame.setup||[],analyzeTurns:turns,maxVisits,rules:rules.rules,komi:rules.komi};if(window.__TAURI__?.core?.invoke)return window.__TAURI__.core.invoke('analyze_position',{request});const response=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)});const body=await response.json();if(!response.ok)throw new Error(body.error||'KataGo 分析失败');return body.results}
 async function analyzeCurrentPosition(){const token=++analysisRequest;$('engineStatus').className='status';$('engineStatus').innerHTML='<i></i>CUDA 分析中';$('swingText').textContent='正在等待本地 KataGo…';try{const results=await requestAnalysis([currentMove],settings.positionVisits);if(token!==analysisRequest)return;results.forEach(result=>analyses.set(result.turnNumber,result));$('engineStatus').innerHTML='<i></i>TensorRT / CUDA';renderAnalysis();drawBoard();drawChart();if(pendingJudgementMove===currentMove){speakJudgement(analyses.get(currentMove));pendingJudgementMove=null}}catch(error){if(token!==analysisRequest)return;$('engineStatus').className='status error';$('engineStatus').innerHTML='<i></i>引擎不可用';$('swingText').textContent=error.message;showToast(error.message)}}
 
 function setMove(value){const next=Math.max(0,Math.min(Number(value),currentGame.moves.length));const forward=next===currentMove+1;if(forward){playStoneSound(capturedStones(currentGame.moves,next,19,currentGame.setup||[])>0)}currentMove=next;pendingJudgementMove=forward?next:null;update();if(forward&&analyses.has(currentMove)){speakJudgement(analyses.get(currentMove));pendingJudgementMove=null}clearTimeout(setMove.timer);setMove.timer=setTimeout(()=>{if(!analyses.has(currentMove))analyzeCurrentPosition()},180)}
@@ -277,4 +319,5 @@ document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLower
 window.addEventListener('resize',()=>drawChart());
 const chartPanel=$('chart-panel');if(chartPanel)$('analysis-panel').appendChild(chartPanel);
 if (needsCollection && saveLibrary()) localStorage.setItem('yijing.collection.danghu.v1', 'true');
+else if (rulesetBackfilled) saveLibrary();
 renderFolders();renderTags();selectGame(currentGame.id);

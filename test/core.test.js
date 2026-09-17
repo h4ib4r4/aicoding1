@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { emptyBoard, applyMove, replay, capturedStones, parseSgf, pointName, gtpPointToCoords } = require('../core.js');
+const { emptyBoard, applyMove, replay, capturedStones, parseSgf, pointName, gtpPointToCoords, groupCounts, groupTaxAdjustment, resolveRules } = require('../core.js');
 const { buildQuery, coordsToGtp } = require('../katago.js');
 
 test('落子并重放棋局', () => {
@@ -74,4 +74,64 @@ test('生成 KataGo Analysis Engine 查询', () => {
   assert.deepEqual(query.initialStones, [['B','D16']]);
   assert.deepEqual(query.analyzeTurns, [0,1]);
   assert.equal(query.maxVisits, 32);
+});
+
+test('分析查询接受棋谱自带的规则与贴目', () => {
+  const query = buildQuery({ id: 'test', moves: [{x:15,y:3,color:'B'}], analyzeTurns: [1], rules: 'chinese', komi: 0 });
+  assert.equal(query.rules, 'chinese');
+  assert.equal(query.komi, 0);
+  assert.equal(buildQuery({ id: 'test', moves: [], analyzeTurns: [0] }).komi, 7.5);
+});
+
+test('查询里剔除越界的摆子并保留合法座子', () => {
+  const query = buildQuery({ id: 'test', moves: [], initialStones: [{color:'B',x:3,y:15},{color:'W',x:3,y:3},{color:'B',x:-1,y:99},{color:'W',pass:true}], analyzeTurns: [0] });
+  assert.deepEqual(query.initialStones, [['B','D4'],['W','D16']]);
+});
+
+test('统计棋块数：相连同色算一块', () => {
+  const board = emptyBoard(5);
+  board[0][0] = 'B'; board[0][1] = 'B';
+  board[2][2] = 'B';
+  board[4][4] = 'W';
+  assert.deepEqual(groupCounts(board), { B: 2, W: 1 });
+});
+
+test('还棋头：除第一块外每块 2 目', () => {
+  const oneVsOne = emptyBoard(5);
+  oneVsOne[0][0] = 'B'; oneVsOne[4][4] = 'W';
+  assert.equal(groupTaxAdjustment(oneVsOne), 0);
+
+  const twoVsOne = emptyBoard(5);
+  twoVsOne[0][0] = 'B'; twoVsOne[2][2] = 'B'; twoVsOne[4][4] = 'W';
+  assert.equal(groupTaxAdjustment(twoVsOne), -2);
+
+  const oneVsThree = emptyBoard(7);
+  oneVsThree[0][0] = 'B';
+  oneVsThree[4][0] = 'W'; oneVsThree[4][2] = 'W'; oneVsThree[4][4] = 'W';
+  assert.equal(groupTaxAdjustment(oneVsThree), 4);
+
+  assert.equal(groupTaxAdjustment(emptyBoard(5)), 0);
+});
+
+test('古谱规则预设不贴目且启用还棋头', () => {
+  const ancient = resolveRules({ ruleset: 'ancient-chinese' });
+  assert.equal(ancient.komi, 0);
+  assert.equal(ancient.groupTax, true);
+  assert.equal(ancient.name, '明清规则');
+
+  const modern = resolveRules({});
+  assert.equal(modern.komi, 7.5);
+  assert.equal(modern.groupTax, false);
+
+  assert.equal(resolveRules({ ruleset: 'ancient-chinese', komi: null }).komi, 0, 'KM 缺失时回落到预设');
+  assert.equal(resolveRules({ komi: 6.5 }).komi, 6.5, '棋谱自带贴目优先');
+  assert.equal(resolveRules({ ruleset: 'ancient-chinese', komi: 5.5 }).komi, 5.5);
+});
+
+test('解析 SGF 的贴目与规则属性', () => {
+  const game = parseSgf('(;GM[1]SZ[19]KM[7.5]RU[Chinese];B[pd])');
+  assert.equal(game.komi, 7.5);
+  assert.equal(game.ruleset, 'Chinese');
+  assert.equal(parseSgf('(;SZ[19];B[pd])').komi, null);
+  assert.equal(parseSgf('(;SZ[19]KM[bad];B[pd])').komi, null);
 });

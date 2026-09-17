@@ -78,6 +78,42 @@
     return captured;
   }
 
+  function groupCounts(board) {
+    const size = board.length;
+    const seen = Array.from({ length: size }, () => Array(size).fill(false));
+    const counts = { B: 0, W: 0 };
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      const color = board[y][x];
+      if (!color || seen[y][x]) continue;
+      for (const [gx, gy] of groupAt(board, x, y).stones) seen[gy][gx] = true;
+      if (counts[color] !== undefined) counts[color]++;
+    }
+    return counts;
+  }
+
+  // 明清「还棋头」：除自己的第一块棋外，每多一块要还对方 2 目。
+  // 返回该项对黑棋目差的修正（正数表示黑棋得益，因为白棋块数更多）。
+  function groupTaxAdjustment(board, pointsPerExtraGroup = 2) {
+    const counts = groupCounts(board);
+    const paid = color => Math.max(0, counts[color] - 1) * pointsPerExtraGroup;
+    return paid('W') - paid('B');
+  }
+
+  // 古谱与现代棋谱的评估前提不同：座子制、白先、无贴目、还棋头。
+  const RULE_PRESETS = {
+    modern: { id: 'modern', name: '现代规则', rules: 'chinese', komi: 7.5, groupTax: false, note: '中国规则 · 贴 7.5 目' },
+    'ancient-chinese': { id: 'ancient-chinese', name: '明清规则', rules: 'chinese', komi: 0, groupTax: true, note: '座子 · 白先 · 无贴目 · 还棋头' }
+  };
+
+  function resolveRules(meta = {}) {
+    const key = typeof meta.ruleset === 'string' ? meta.ruleset : '';
+    const preset = RULE_PRESETS[key] || RULE_PRESETS.modern;
+    const raw = meta.komi;
+    const explicit = raw !== null && raw !== undefined && raw !== '';
+    const komi = explicit && Number.isFinite(Number(raw)) ? Number(raw) : preset.komi;
+    return { ...preset, komi };
+  }
+
   function sgfPoint(value, size = BOARD_SIZE) {
     if (!value || value.length < 2) return { pass: true };
     const x = value.charCodeAt(0) - 97;
@@ -127,11 +163,15 @@
     const moveRegex = /;(B|W)\[([^\]]*)\]/g;
     let match;
     while ((match = moveRegex.exec(main))) moves.push({ color: match[1], ...sgfPoint(match[2], boardSize) });
+    const komiText = prop('KM');
+    const komi = komiText === '' ? null : Number(komiText);
     return {
       title: prop('GN') || prop('EV') || '导入的棋谱',
       black: prop('PB') || '黑棋', white: prop('PW') || '白棋',
       blackRank: prop('BR'), whiteRank: prop('WR'),
-      result: prop('RE') || '未知', date: prop('DT') || '', event: prop('EV') || '', setup, moves
+      result: prop('RE') || '未知', date: prop('DT') || '', event: prop('EV') || '',
+      komi: Number.isFinite(komi) ? komi : null, ruleset: prop('RU'),
+      setup, moves
     };
   }
 
@@ -148,5 +188,5 @@
     return x < 0 || y < 0 || y >= size ? null : { x, y };
   }
 
-  return { BOARD_SIZE, emptyBoard, neighbors, groupAt, applyMove, replay, capturedStones, sgfPoint, mainSgfSequence, parseSgf, pointName, gtpPointToCoords };
+  return { BOARD_SIZE, emptyBoard, neighbors, groupAt, applyMove, replay, capturedStones, groupCounts, groupTaxAdjustment, RULE_PRESETS, resolveRules, sgfPoint, mainSgfSequence, parseSgf, pointName, gtpPointToCoords };
 });

@@ -27,7 +27,22 @@ function readJson(request) {
   });
 }
 
-http.createServer(async (request, response) => {
+function parseAnalyzeInput(input) {
+  if (!Array.isArray(input.moves) || !Array.isArray(input.analyzeTurns) || !input.analyzeTurns.length) throw new Error('缺少棋谱或分析手数');
+  const request = {
+    moves: input.moves,
+    analyzeTurns: input.analyzeTurns,
+    maxVisits: Math.min(500, Math.max(1, Number(input.maxVisits) || 64))
+  };
+  // 座子 / 摆子必须一起送给引擎，否则古谱会在空盘面上被分析
+  if (Array.isArray(input.initialStones)) request.initialStones = input.initialStones;
+  if (typeof input.rules === 'string' && input.rules.trim()) request.rules = input.rules.trim();
+  const komi = Number(input.komi);
+  if (input.komi !== undefined && input.komi !== null && input.komi !== '' && Number.isFinite(komi)) request.komi = komi;
+  return request;
+}
+
+const server = http.createServer(async (request, response) => {
   const requestPath = decodeURIComponent((request.url || '/').split('?')[0]);
   if (requestPath === '/api/katago/status') {
     sendJson(response, 200, katago.status());
@@ -36,8 +51,7 @@ http.createServer(async (request, response) => {
   if (requestPath === '/api/analyze' && request.method === 'POST') {
     try {
       const input = await readJson(request);
-      if (!Array.isArray(input.moves) || !Array.isArray(input.analyzeTurns) || !input.analyzeTurns.length) throw new Error('缺少棋谱或分析手数');
-      const results = await katago.analyze({ moves: input.moves, analyzeTurns: input.analyzeTurns, maxVisits: Math.min(500, Math.max(1, Number(input.maxVisits) || 64)) });
+      const results = await katago.analyze(parseAnalyzeInput(input));
       sendJson(response, 200, { results });
     } catch (error) {
       sendJson(response, 500, { error: error.message });
@@ -60,8 +74,14 @@ http.createServer(async (request, response) => {
     response.writeHead(200, { 'Content-Type': mimeTypes[path.extname(filePath)] || 'application/octet-stream' });
     response.end(data);
   });
-}).listen(port, '127.0.0.1', () => {
-  console.log(`弈境 Demo：http://127.0.0.1:${port}`);
 });
 
-process.on('SIGINT', () => { katago.close(); process.exit(0); });
+if (require.main === module) {
+  server.listen(port, '127.0.0.1', () => {
+    console.log(`弈境 Demo：http://127.0.0.1:${port}`);
+  });
+
+  process.on('SIGINT', () => { katago.close(); process.exit(0); });
+}
+
+module.exports = { parseAnalyzeInput };

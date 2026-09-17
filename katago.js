@@ -17,12 +17,14 @@ function resolveConfig(env = process.env) {
   };
 }
 
-function buildQuery({ id, moves, initialStones = [], analyzeTurns, maxVisits = 64 }) {
+function buildQuery({ id, moves, initialStones = [], analyzeTurns, maxVisits = 64, rules = 'chinese', komi = 7.5 }) {
   return {
     id,
     moves: moves.map(move => [move.color, move.pass ? 'pass' : coordsToGtp(move.x, move.y)]),
-    initialStones: initialStones.map(stone => [stone.color, coordsToGtp(stone.x, stone.y)]),
-    rules: 'chinese', komi: 7.5, boardXSize: 19, boardYSize: 19,
+    initialStones: initialStones
+      .filter(stone => stone && !stone.pass && Number.isInteger(stone.x) && Number.isInteger(stone.y) && stone.x >= 0 && stone.x < 19 && stone.y >= 0 && stone.y < 19)
+      .map(stone => [stone.color, coordsToGtp(stone.x, stone.y)]),
+    rules, komi, boardXSize: 19, boardYSize: 19,
     analyzeTurns, maxVisits, includePolicy: true
   };
 }

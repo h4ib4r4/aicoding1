@@ -60,7 +60,7 @@
 
         <section class="review-panel">
           <div class="game-header">
-            <div class="breadcrumb"><span id="breadcrumbFolder">全部棋谱</span><b>›</b><strong id="gameTitle">秋季升段赛 · 第 3 轮</strong></div>
+            <div class="breadcrumb"><span id="breadcrumbFolder">全部棋谱</span><b>›</b><strong id="gameTitle">秋季升段赛 · 第 3 轮</strong><em class="rule-chip hidden" id="ruleChip">明清规则</em></div>
             <div class="game-actions"><button id="favoriteButton" title="收藏">☆</button><button id="exportButton" title="导出 SGF">⇩</button><button id="editGameButton" title="重命名与分类">•••</button></div>
           </div>
 
@@ -99,6 +99,7 @@
                   <div class="eval-top"><span>局面评估 · 第 <b id="evalMove">38</b> 手</span><em class="status" id="engineStatus"><i></i>连接 KataGo</em></div>
                   <div class="eval-numbers"><div><small>黑棋胜率</small><strong id="evalBlack">--<sup>%</sup></strong></div><div class="score-lead"><span id="leadLabel">等待分析</span><b id="scoreLead">-- 目</b></div><div><small>白棋胜率</small><strong id="evalWhite">--<sup>%</sup></strong></div></div>
                   <div class="winbar"><i id="blackBar"></i></div>
+                  <div class="tax-note hidden" id="taxNote"></div>
                   <div class="swing" id="swingText">正在读取本地 CUDA KataGo…</div>
                 </div>
 
@@ -117,7 +118,7 @@
           </div>
 
           <div id="chart-panel" class="chart-panel">
-            <div class="chart-heading"><div><h3 id="chartTitle">胜率走势</h3><span id="chartLegend"><i class="legend-black"></i>黑棋胜率</span><span><i class="legend-key"></i>关键手</span></div><div class="chart-tabs"><button class="active" data-chart="winrate">胜率</button><button data-chart="score">目差</button></div></div>
+            <div class="chart-heading"><div><h3 id="chartTitle">胜率走势</h3><span id="chartLegend"><i class="legend-black"></i>黑棋胜率</span><span><i class="legend-key"></i>关键手</span><span id="chartRuleNote" class="rule-note"></span></div><div class="chart-tabs"><button class="active" data-chart="winrate">胜率</button><button data-chart="score">目差</button></div></div>
             <canvas id="winChart" width="1200" height="220"></canvas>
           </div>
         </section>
