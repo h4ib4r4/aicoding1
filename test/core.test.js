@@ -1,7 +1,17 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { emptyBoard, applyMove, replay, capturedStones, parseSgf, pointName, gtpPointToCoords, groupCounts, groupTaxAdjustment, moveNumberAt, CANDIDATE_MARKS, resolveRules } = require('../core.js');
+const fs = require('node:fs');
+const path = require('node:path');
+const { emptyBoard, applyMove, replay, capturedStones, parseSgf, serializeSgf, sgfValue, pointName, gtpPointToCoords, groupCounts, groupTaxAdjustment, moveNumberAt, CANDIDATE_MARKS, resolveRules } = require('../core.js');
 const { buildQuery, coordsToGtp } = require('../katago.js');
+
+// 直接读真实的内置古谱：导出/导入的往返要在真数据上成立，不能只跑人造样本
+const collection = (() => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'collection.js'), 'utf8');
+  const sandbox = {};
+  new Function('window', source)(sandbox);
+  return sandbox.YijingCollection;
+})();
 
 test('落子并重放棋局', () => {
   const moves = [{x:3,y:3,color:'B'},{x:4,y:3,color:'W'}];
@@ -162,4 +172,84 @@ test('棋面手数：取每个交叉点最后一次落子', () => {
 test('AI 候选点用字母标记，与手数（数字）不同形', () => {
   assert.deepEqual(CANDIDATE_MARKS, ['A', 'B', 'C']);
   for (const mark of CANDIDATE_MARKS) assert.equal(/^[A-Z]$/.test(mark), true, '候选标记必须是字母');
+});
+
+test('SGF 坐标编码与解码互为逆运算', () => {
+  assert.equal(sgfValue({ x: 3, y: 15 }), 'dp');
+  assert.equal(sgfValue({ x: 15, y: 3 }), 'pd');
+  assert.equal(sgfValue({ x: 0, y: 0 }), 'aa', 'SGF 不像围棋记谱那样跳过 i');
+  assert.equal(sgfValue({ color: 'B', pass: true }), '', '虚着对应 ;B[]');
+  assert.equal(sgfValue({ x: -1, y: 5 }), '');
+  assert.equal(sgfValue({ x: 19, y: 5 }), '');
+  assert.equal(sgfValue(null), '');
+  assert.deepEqual(parseSgf('(;SZ[19];B[aa])').moves[0], { color: 'B', x: 0, y: 0 });
+});
+
+test('导出座子古谱：写回 AB/AW、贴目、规则与白先', () => {
+  const game = {
+    title: '当湖十局 · 第 1 局', black: '范西屏', white: '施襄夏', date: '1739年', result: '未知',
+    ruleset: 'ancient-chinese',
+    setup: [{ color: 'B', x: 3, y: 15 }, { color: 'B', x: 15, y: 3 }, { color: 'W', x: 3, y: 3 }, { color: 'W', x: 15, y: 15 }],
+    moves: [{ color: 'W', x: 16, y: 5 }, { color: 'B', x: 16, y: 10 }]
+  };
+  const text = serializeSgf(game);
+  assert.match(text, /AB\[dp\]\[pd\]/, '座子（黑）必须写回');
+  assert.match(text, /AW\[dd\]\[pp\]/, '座子（白）必须写回');
+  assert.match(text, /KM\[0\]/, '古谱不贴目');
+  assert.match(text, /RU\[ancient-chinese\]/);
+  assert.match(text, /PL\[W\]/, '白先必须显式声明');
+  assert.equal(/HA\[/.test(text), false, '座子是双方各摆两子，不是让子');
+
+  const back = parseSgf(text);
+  assert.deepEqual(back.setup, game.setup);
+  assert.deepEqual(back.moves, game.moves);
+  assert.equal(back.komi, 0);
+  assert.equal(back.ruleset, 'ancient-chinese');
+  assert.equal(back.title, game.title);
+  assert.equal(back.black, '范西屏');
+});
+
+test('内置十局古谱导出后仍然带座子且白先', () => {
+  assert.equal(collection.length, 10, '内置棋谱应为十局');
+  for (const game of collection) {
+    const text = serializeSgf(game);
+    const back = parseSgf(text);
+    assert.equal(back.setup.length, 4, `${game.title} 应有四颗座子`);
+    assert.deepEqual(back.setup, game.setup, `${game.title} 座子位置必须一致`);
+    assert.equal(back.moves.length, game.moves.length, `${game.title} 手数必须一致`);
+    assert.equal(back.moves[0].color, 'W', `${game.title} 应保持白先`);
+    assert.equal(resolveRules(back).komi, 0, `${game.title} 不贴目`);
+    const board = replay(back.moves, 0, 19, back.setup);
+    for (const stone of game.setup) assert.equal(board[stone.y][stone.x], stone.color, '座子应真的落在盘上');
+  }
+});
+
+test('只有真让子局才写 HA', () => {
+  const handicap = serializeSgf({ setup: [{ color: 'B', x: 15, y: 3 }, { color: 'B', x: 3, y: 15 }], moves: [{ color: 'B', x: 16, y: 16 }] });
+  assert.match(handicap, /AB\[pd\]\[dp\]/);
+  assert.match(handicap, /HA\[2\]/);
+  assert.equal(/AW\[/.test(handicap), false);
+  assert.equal(/PL\[/.test(handicap), false, '让子棋仍是黑先，不必声明');
+  assert.deepEqual(parseSgf(handicap).setup, [{ color: 'B', x: 15, y: 3 }, { color: 'B', x: 3, y: 15 }]);
+
+  assert.equal(/HA\[/.test(serializeSgf({ setup: [{ color: 'B', x: 3, y: 15 }], moves: [] })), false, '单子摆子不是让子');
+  assert.equal(/HA\[/.test(serializeSgf({ setup: [{ color: 'B', x: 3, y: 15 }, { color: 'W', x: 3, y: 3 }], moves: [] })), false, '双方都有摆子不是让子');
+});
+
+test('导出转义 SGF 特殊字符并丢弃越界摆子', () => {
+  const text = serializeSgf({ title: 'a]b\\c', moves: [] });
+  assert.equal(parseSgf(text).title, 'a]b\\c');
+
+  const multiLine = serializeSgf({ event: '第一行\n第二行', moves: [] });
+  assert.equal(parseSgf(multiLine).event, '第一行\n第二行');
+
+  const cleaned = serializeSgf({ setup: [{ color: 'B', x: -1, y: 0 }, { color: 'B', pass: true }, { color: 'B', x: 3, y: 15 }], moves: [] });
+  assert.match(cleaned, /AB\[dp\]/);
+  assert.equal(parseSgf(cleaned).setup.length, 1, '越界与虚着摆子不写出去');
+});
+
+test('导出虚着写成空值', () => {
+  const text = serializeSgf({ moves: [{ color: 'B', pass: true }, { color: 'W', x: 3, y: 3 }] });
+  assert.match(text, /;B\[\];W\[dd\]/);
+  assert.deepEqual(parseSgf(text).moves, [{ color: 'B', pass: true }, { color: 'W', x: 3, y: 3 }]);
 });

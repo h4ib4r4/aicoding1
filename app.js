@@ -1,4 +1,4 @@
-const { replay, capturedStones, parseSgf, pointName, gtpPointToCoords, groupCounts, groupTaxAdjustment, moveNumberAt, CANDIDATE_MARKS, resolveRules } = window.YijingCore;
+const { replay, capturedStones, parseSgf, serializeSgf, pointName, gtpPointToCoords, groupCounts, groupTaxAdjustment, moveNumberAt, CANDIDATE_MARKS, resolveRules } = window.YijingCore;
 
 const baseMoves = [
   [3,15],[15,3],[15,15],[3,3],[5,2],[2,5],[16,6],[16,10],[13,16],[10,16],
@@ -107,7 +107,81 @@ const chartCanvas = $('winChart');
 const chartCtx = chartCanvas.getContext('2d');
 
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char])); }
-function librarySnapshot() { return { version: 1, savedAt: new Date().toISOString(), games, folders: customFolders, tags: customTags, settings }; }
+// ---------------------------------------------------------------------------
+// 桌面版棋谱库：增量提交到 SQLite
+//
+// 以前是把整库序列化成一个 JSON 覆盖写盘，改一个收藏也要重写所有棋谱。现在只提交
+// 这次真正变过的部分。差异靠「影子表」比对得出——记着上次成功落盘的内容，而不是在
+// 每个修改点手动登记：那种做法漏掉一处就会静默丢改动，比对内存状态则不会漏。
+// ---------------------------------------------------------------------------
+let syncedGames = new Map();   // 主键 → 上次成功落盘的内容
+let syncedMeta = { folders: '', tags: '', settings: '' };
+let syncPending = false;
+let syncTimer = null;
+let loadedKeys = null;         // 数据库交回的主键原文，与 games 一一对应
+
+// 主键取棋谱 id 的 JSON 原文而不是 String(id)：数字 1 与字符串 "1" 才不会被混为一局
+function gameKey(game, index) {
+  const id = game && game.id;
+  return id === undefined || id === null ? `#index-${index}` : JSON.stringify(id);
+}
+
+// 以当前内存状态为基线。刚读完盘时调用，避免下一次保存把整个库又传一遍。
+function resetSyncBaseline() {
+  syncedGames = new Map();
+  for (let index = 0; index < games.length; index++) {
+    // 读盘回来的棋谱沿用数据库给的主键原文。主键是两边约定的身份，让 JavaScript 照着
+    // id 重算一遍浮点数文本，和 Rust 的 serde_json 对不上就会写成重复行而不是更新。
+    syncedGames.set(loadedKeys?.[index] ?? gameKey(games[index], index), JSON.stringify(games[index]));
+  }
+  syncedMeta = { folders: JSON.stringify(customFolders), tags: JSON.stringify(customTags), settings: JSON.stringify(settings) };
+  syncPending = false;
+}
+
+function collectLibraryChange() {
+  const upserts = [];
+  const alive = new Set();
+  for (let index = 0; index < games.length; index++) {
+    const key = gameKey(games[index], index);
+    alive.add(key);
+    const text = JSON.stringify(games[index]);
+    if (syncedGames.get(key) !== text) upserts.push({ key, index, game: games[index], text });
+  }
+  const removed = [];
+  for (const key of syncedGames.keys()) if (!alive.has(key)) removed.push(key);
+  const meta = { folders: JSON.stringify(customFolders), tags: JSON.stringify(customTags), settings: JSON.stringify(settings) };
+  const changed = {};
+  if (meta.folders !== syncedMeta.folders) changed.folders = customFolders;
+  if (meta.tags !== syncedMeta.tags) changed.tags = customTags;
+  if (meta.settings !== syncedMeta.settings) changed.settings = settings;
+  return { upserts, removed, meta, changed };
+}
+
+async function flushLibrary() {
+  // 还没读完盘就落盘，等于拿界面上的旧数据盖掉本地棋谱库
+  if (!isDesktop || !libraryReady) return;
+  clearTimeout(syncTimer);
+  syncTimer = null;
+  const change = collectLibraryChange();
+  syncPending = false;
+  const changedKeys = Object.keys(change.changed);
+  if (!change.upserts.length && !change.removed.length && !changedKeys.length) return;
+  const payload = { upserts: change.upserts.map(entry => ({ key: entry.key, index: entry.index, game: entry.game })), removed: change.removed };
+  for (const key of changedKeys) payload[key] = change.changed[key];
+  try {
+    const report = await desktopInvoke('library_sync', { change: payload });
+    // 成功之后才推进基线：失败时差异原样留着，下次保存接着试
+    for (const entry of change.upserts) syncedGames.set(entry.key, entry.text);
+    for (const key of change.removed) syncedGames.delete(key);
+    syncedMeta = change.meta;
+    desktopLog(`棋谱库已同步：写入 ${report.written} / 跳过 ${report.skipped} / 删除 ${report.removed}`);
+  } catch (error) {
+    syncPending = true;
+    desktopLog(`棋谱库同步失败：${error}`);
+    showToast(`保存到本地失败：${error}`);
+  }
+}
+
 function saveLibrary() {
   let ok = true;
   try {
@@ -116,15 +190,12 @@ function saveLibrary() {
     localStorage.setItem('yijing.tags', JSON.stringify(customTags));
     localStorage.setItem('yijing.settings', JSON.stringify(settings));
   } catch { showToast('本地存储空间不足，修改仅在本次打开期间有效'); ok = false; }
-  // 桌面版再落一份到应用数据目录：清理缓存、换浏览器都不会丢棋谱。
-  // 写盘按 400ms 合并，连续编辑不会每一下都碰磁盘。
+  // 桌面版另外落一份到应用数据目录：清理缓存、换浏览器都不会丢棋谱。
+  // 提交按 250ms 合并，连着改几下只走一次数据库。
   if (isDesktop) {
-    clearTimeout(saveLibrary.timer);
-    saveLibrary.timer = setTimeout(() => {
-      desktopInvoke('library_save', { data: librarySnapshot() })
-        .then(() => desktopLog(`已保存本地棋谱库：${games.length} 局`))
-        .catch(error => { desktopLog(`保存本地棋谱库失败：${error}`); showToast(`保存到本地失败：${error}`); });
-    }, 400);
+    syncPending = true;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => flushLibrary(), 250);
   }
   return ok;
 }
@@ -570,13 +641,24 @@ $('searchInput').addEventListener('input',e=>renderGames(e.target.value));
 $('importButton').onclick=()=>$('fileInput').click();
 $('fileInput').onchange=async e=>{pendingImports=[];const fingerprints=new Set(games.map(game=>String(game.sgfText||'').replace(/\s+/g,'')));for(const file of e.target.files){try{const sgfText=await file.text(),fingerprint=sgfText.replace(/\s+/g,'');if(fingerprints.has(fingerprint)){showToast(file.name+': 棋谱已存在，已跳过');continue}fingerprints.add(fingerprint);const parsed=parseSgf(sgfText);pendingImports.push({...parsed,sgfText,title:parsed.title==='导入的棋谱'?file.name.replace(/\.sgf$/i,''):parsed.title,fileName:file.name,folder:'mine'});}catch(err){showToast(`${file.name}: ${err.message}`)}}if(pendingImports.length)openGameModal('import');e.target.value=''};
 $('editGameButton').onclick=()=>openGameModal('edit');
-$('exportButton').onclick=()=>{
-  const esc=value=>String(value||'').replace(/\\/g,'\\\\').replace(/\]/g,'\\]').replace(/\[/g,'\\[').replace(/\r?\n/g,'\\n');
-  const g=currentGame; const props=[['GM','1'],['FF','4'],['CA','UTF-8'],['GN',g.title],['PB',g.black],['PW',g.white],['BR',g.blackRank],['WR',g.whiteRank],['EV',g.event],['DT',g.date],['RE',g.result]].filter(([,v])=>v);
-  const body=props.map(([k,v])=>`${k}[${esc(v)}]`).join('');
-  const moves=g.moves.map(move=>move.pass?`;${move.color}[]`:`;${move.color}[${String.fromCharCode(97+move.x)}${String.fromCharCode(97+move.y)}]`).join('');
-  const blob=new Blob([`(;${body}${moves})`],{type:'application/x-go-sgf'}); const url=URL.createObjectURL(blob); const link=document.createElement('a'); link.href=url; link.download=`${(g.title||'yijing-game').replace(/[\\/:*?"<>|]/g,'_')}.sgf`; link.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); showToast('SGF 已导出');
-};
+$('exportButton').onclick=()=>exportCurrentGame();
+// 浏览器版走 <a download>；桌面版落盘到「下载」目录并把路径回报给用户。
+// WebView2 的下载行为受策略影响，不能指望它替我们把文件放好。
+async function exportCurrentGame(){
+  const g=currentGame;
+  if(!g||!g.moves)return;
+  const sgfText=serializeSgf(g);
+  const name=`${(g.title||'yijing-game').replace(/[\\/:*?"<>|]/g,'_')}.sgf`;
+  if(isDesktop){
+    try{
+      const path=await desktopInvoke('export_sgf',{filename:name,content:sgfText});
+      desktopLog(`已导出 SGF：${path}`);
+      showToast(`SGF 已导出到 ${path}`);
+    }catch(error){showToast(`导出失败：${error}`)}
+    return;
+  }
+  const blob=new Blob([sgfText],{type:'application/x-go-sgf'}); const url=URL.createObjectURL(blob); const link=document.createElement('a'); link.href=url; link.download=name; link.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); showToast('SGF 已导出');
+}
 $('newFolderButton').onclick=()=>{$('folderNameInput').value='';$('folderModal').classList.remove('hidden');setTimeout(()=>$('folderNameInput').focus(),0)};
 $('gameForm').onsubmit=e=>{e.preventDefault();const title=$('gameNameInput').value.trim(),folder=$('gameFolderSelect').value,tag=$('gameTagSelect').value;if(!title)return;if(modalMode==='import'){const parsed=pendingImports.shift();const game={...parsed,id:Date.now()+Math.random(),title,folder,tag,imported:true,favorite:false};delete game.fileName;games.unshift(game);saveLibrary();renderFolders();if(pendingImports.length){openGameModal('import');return}currentGame=game;activeFolder=folder;$('gameModal').classList.add('hidden');renderFolders();selectGame(game.id);showToast('棋谱已导入并保存分类')}else{currentGame.title=title;currentGame.folder=folder;currentGame.tag=tag;saveLibrary();activeFolder=currentGame.deleted?'trash':folder;$('gameModal').classList.add('hidden');renderFolders();renderGames();$('gameTitle').textContent=title;showToast('棋谱信息已保存')}};
 $('folderForm').onsubmit=e=>{e.preventDefault();const name=$('folderNameInput').value.trim();if(!name)return;if(customFolders.some(folder=>folder.name===name)){showToast('已存在同名文件夹');return}const folder={id:`custom-${Date.now()}`,name};customFolders.push(folder);folderNames[folder.id]=name;saveLibrary();$('folderModal').classList.add('hidden');renderFolders();showToast(`已创建“${name}”`)};
@@ -589,6 +671,8 @@ $('filterForm').onsubmit=e=>{e.preventDefault();libraryFilter={result:$('resultF
 $('resetFilterButton').onclick=()=>{libraryFilter={result:'',favorites:false};$('resultFilter').value='';$('favoriteFilter').checked=false;$('filterButton').classList.remove('active');renderGames($('searchInput').value);$('filterModal').classList.add('hidden')};
 $('settingsButton').onclick=()=>{$('positionVisitsInput').value=settings.positionVisits;$('fullVisitsInput').value=settings.fullVisits;$('criticalThresholdInput').value=settings.criticalThreshold;$('soundEnabledInput').checked=settings.soundEnabled;$('voiceEnabledInput').checked=settings.voiceEnabled;$('volumeInput').value=settings.volume;$('showNumbersInput').checked=showNumbers;$('showHeatInput').checked=showHeat;$('settingsModal').classList.remove('hidden')};
 $('settingsForm').onsubmit=e=>{e.preventDefault();settings={...settings,positionVisits:Number($('positionVisitsInput').value),fullVisits:Number($('fullVisitsInput').value),criticalThreshold:Number($('criticalThresholdInput').value),soundEnabled:$('soundEnabledInput').checked,voiceEnabled:$('voiceEnabledInput').checked,volume:Number($('volumeInput').value)};saveLibrary();setShowNumbers($('showNumbersInput').checked,false);setShowHeat($('showHeatInput').checked,false);$('soundButton').classList.toggle('active',settings.soundEnabled);$('soundButton').title=settings.soundEnabled?'关闭声音':'开启声音';$('settingsModal').classList.add('hidden');drawChart();showToast('分析设置已保存')};
+// 棋谱库现在是应用数据目录里的数据库文件，得让用户找得到、能自己备份
+$('openDataFolderButton').onclick=()=>desktopInvoke('open_data_folder').catch(error=>showToast(String(error)));
 document.querySelectorAll('[data-close]').forEach(button=>button.onclick=()=>closeModal(button.dataset.close));
 document.querySelectorAll('.modal-backdrop').forEach(backdrop=>backdrop.onclick=e=>{if(e.target===backdrop)closeModal(backdrop.id)});
 $('moveSlider').oninput=e=>setMove(e.target.value);$('firstButton').onclick=()=>setMove(0);$('prevButton').onclick=()=>setMove(currentMove-1);$('nextButton').onclick=()=>setMove(currentMove+1);$('lastButton').onclick=()=>setMove(currentGame.moves.length);$('playButton').onclick=togglePlay;
@@ -773,7 +857,13 @@ renderFolders();renderTags();setShowNumbers(showNumbers,false);setShowHeat(showH
 // ---------------------------------------------------------------------------
 function applyLibrary(payload) {
   let changed = false;
-  if (Array.isArray(payload.games) && payload.games.length) { games.length = 0; for (const game of payload.games) games.push(normalizeGame(game)); changed = true; }
+  if (Array.isArray(payload.games) && payload.games.length) {
+    games.length = 0;
+    for (const game of payload.games) games.push(normalizeGame(game));
+    // 主键沿用数据库原文；为空时交给 gameKey() 现算，宁可多写一行也不写错行
+    loadedKeys = Array.isArray(payload.keys) && payload.keys.length === payload.games.length ? payload.keys : null;
+    changed = true;
+  }
   if (Array.isArray(payload.folders) && payload.folders.length) { customFolders.length = 0; customFolders.push(...payload.folders); changed = true; }
   if (Array.isArray(payload.tags) && payload.tags.length) { customTags.length = 0; customTags.push(...payload.tags); changed = true; }
   if (payload.settings && typeof payload.settings === 'object') { settings = { ...settings, ...payload.settings }; showNumbers = settings.showNumbers !== false; showHeat = settings.showHeat !== false; changed = true; }
@@ -794,6 +884,8 @@ async function bootstrapDesktop() {
     desktopLog(payload ? `读到本地棋谱库：${payload.games?.length || 0} 局` : '本地棋谱库不存在，按首次运行处理');
     libraryReady = true;
     if (payload) loaded = applyLibrary(payload);
+    // 以刚落盘的内容为基线，此后只有真正变过的棋谱才会被提交上去
+    if (loaded) resetSyncBaseline();
   } catch (error) { libraryReady = true; desktopLog(`读取本地棋谱库失败：${error}`); showToast(String(error)); }
   if (!loaded) {
     // 首次运行：把浏览器里已有的棋谱搬进应用数据目录，此后以本地文件为准
@@ -816,5 +908,23 @@ if (isDesktop) {
   document.addEventListener('keydown', event => {
     if (event.key === 'F5' || ((event.ctrlKey || event.metaKey) && ['r', 'R', 'p', 'P'].includes(event.key))) event.preventDefault();
   });
+  // 关窗前把还没落盘的改动写完。提交有 250ms 合并窗口，正好在窗口里点关闭的话，
+  // 那一下改动会连着进程一起消失——所以这里必须拦住，写完再真关。
+  const appWindow = window.__TAURI__?.window?.getCurrentWindow?.();
+  if (appWindow) {
+    appWindow.onCloseRequested(async event => {
+      if (!syncPending) return;   // 没有待写内容就别拦，交给 Tauri 自己关
+      event.preventDefault();
+      desktopLog('收到关窗请求：先把待落盘的改动写完');
+      try { await flushLibrary(); } catch (error) { desktopLog(`关窗前落盘失败：${error}`); }
+      // 用 destroy 而不是 close：close 会再发一次关闭请求，而 Tauri 的 onCloseRequested
+      // 包装在「未拦截」时同样会调 destroy，等于绕一圈又回到这里。
+      try { await appWindow.destroy(); } catch (error) { desktopLog(`关闭窗口失败：${error}`); }
+    }).catch(error => desktopLog(`无法监听关窗事件：${error}`));
+  }
+} else {
+  // 浏览器版没有「应用数据目录」这回事，那一栏留着只会让人困惑
+  const libraryGroup = $('libraryGroup');
+  if (libraryGroup) libraryGroup.style.display = 'none';
 }
 bootstrapDesktop();

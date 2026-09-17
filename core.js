@@ -193,6 +193,56 @@
     };
   }
 
+  // 坐标 → SGF 字母对：x/y 都从 'a' 起，且 SGF 不像围棋记谱那样跳过 i。
+  // 传 pass、越界或残缺的点一律返回空串，对应 SGF 的 ;B[] 写法。
+  function sgfValue(point, size = BOARD_SIZE) {
+    if (!point || point.pass) return '';
+    const x = Number(point.x);
+    const y = Number(point.y);
+    if (!Number.isInteger(x) || !Number.isInteger(y)) return '';
+    return x < 0 || y < 0 || x >= size || y >= size
+      ? ''
+      : String.fromCharCode(97 + x) + String.fromCharCode(97 + y);
+  }
+
+  // 导出 SGF。座子（古谱的 AB/AW）和贴目/规则必须写回去：
+  // 少了 AB/AW，这份棋谱再被别人打开就是一副空盘，古谱也就失去了意义。
+  function serializeSgf(game = {}, options = {}) {
+    const size = options.boardSize || BOARD_SIZE;
+    // SGF 只规定 \] \\ 两种转义，以及「\ + 真换行」的软换行；没有 \n 这种写法。
+    // 把换行转成 \n 是错的：规范解析器会把 \ 吃掉，还原出一个字母 n。
+    // 换行按原样写进值里即可（SGF 值本身允许含换行），只把 CRLF 归一成 LF。
+    const escape = value => String(value === null || value === undefined ? '' : value)
+      .replace(/\\/g, '\\\\').replace(/\]/g, '\\]').replace(/\r\n?/g, '\n');
+    const rules = resolveRules({ ruleset: game.ruleset, komi: game.komi });
+    const moves = Array.isArray(game.moves) ? game.moves : [];
+    const setup = (Array.isArray(game.setup) ? game.setup : []).filter(stone => sgfValue(stone, size));
+    const props = [];
+    const put = (key, value) => { const text = escape(value); if (text !== '') props.push(`${key}[${text}]`); };
+
+    put('GM', 1); put('FF', 4); put('CA', 'UTF-8'); put('AP', 'Yijing:0.1');
+    put('SZ', size);
+    put('GN', game.title); put('PB', game.black); put('PW', game.white);
+    put('BR', game.blackRank); put('WR', game.whiteRank);
+    put('EV', game.event); put('DT', game.date); put('RE', game.result);
+    put('KM', rules.komi);
+    // RU 原样保留，我们的规则标识（ancient-chinese）才能原样读回来
+    put('RU', game.ruleset);
+
+    const blackSetup = setup.filter(stone => stone.color === 'B').map(stone => sgfValue(stone, size));
+    const whiteSetup = setup.filter(stone => stone.color === 'W').map(stone => sgfValue(stone, size));
+    if (blackSetup.length) props.push(`AB${blackSetup.map(value => `[${value}]`).join('')}`);
+    if (whiteSetup.length) props.push(`AW${whiteSetup.map(value => `[${value}]`).join('')}`);
+    // HA 是「让子数」，按 SGF 惯例至少两子、且白方盘上没有摆子才算。
+    // 座子制是双方各摆两子的固定开局，标成让子会让别的程序把古谱误读成让子棋。
+    if (blackSetup.length >= 2 && !whiteSetup.length) put('HA', blackSetup.length);
+    // 白先必须显式写出（SGF 默认黑先），否则座子古谱读回来就变成黑先了
+    if (setup.length && moves.length && moves[0].color === 'W') put('PL', 'W');
+
+    const body = moves.map(move => `;${move.color === 'W' ? 'W' : 'B'}[${sgfValue(move, size)}]`).join('');
+    return `(;${props.join('')}${body})`;
+  }
+
   function pointName(x, y, size = BOARD_SIZE) {
     const letters = 'ABCDEFGHJKLMNOPQRST';
     return `${letters[x] || '?'}${size - y}`;
@@ -206,5 +256,5 @@
     return x < 0 || y < 0 || y >= size ? null : { x, y };
   }
 
-  return { BOARD_SIZE, emptyBoard, neighbors, groupAt, applyMove, replay, capturedStones, groupCounts, groupTaxAdjustment, moveNumberAt, CANDIDATE_MARKS, RULE_PRESETS, resolveRules, sgfPoint, mainSgfSequence, parseSgf, pointName, gtpPointToCoords };
+  return { BOARD_SIZE, emptyBoard, neighbors, groupAt, applyMove, replay, capturedStones, groupCounts, groupTaxAdjustment, moveNumberAt, CANDIDATE_MARKS, RULE_PRESETS, resolveRules, sgfPoint, sgfValue, mainSgfSequence, parseSgf, serializeSgf, pointName, gtpPointToCoords };
 });

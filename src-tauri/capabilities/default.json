@@ -3,5 +3,8 @@
   "identifier": "default",
   "description": "弈境主窗口默认权限",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-destroy"
+  ]
 }
