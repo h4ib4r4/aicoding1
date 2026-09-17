@@ -3,130 +3,171 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#f4f1e9">
+  <meta name="theme-color" content="#e7e0d1">
   <title>弈境 · 围棋复盘</title>
+  <link rel="icon" href="app-icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
 </head>
-<body>
-  <div class="app-shell">
-    <aside class="sidebar">
-      <div class="brand">
-        <div class="brand-mark" aria-hidden="true"><i></i><i></i></div>
-        <div><strong>弈境</strong><span>本地棋谱与 AI 复盘</span></div>
+<body class="layer-none">
+
+  <div class="stage" id="stage">
+    <!-- 三层布局：左信息 · 中棋盘 · 右工具轨。除棋盘外全会自动淡出。 -->
+    <div class="stage-inner" id="stageInner">
+
+      <section class="hud hud-info" id="hudInfo">
+        <div class="title-block">
+          <h1 id="gameTitle">棋谱</h1>
+          <p><em id="breadcrumbFolder">全部棋谱</em><span class="sep">·</span><em id="gameMeta"></em></p>
+        </div>
+        <em class="rule-chip hidden" id="ruleChip">明清规则</em>
+        <div class="who-row">
+          <div class="who">
+            <i class="stone black"></i>
+            <div><strong id="blackName">黑棋</strong><span>黑棋</span></div>
+            <b id="blackWin">--</b>
+          </div>
+          <div class="who white">
+            <i class="stone white"></i>
+            <div><strong id="whiteName">白棋</strong><span>白棋</span></div>
+            <b id="whiteWin">--</b>
+          </div>
+        </div>
+        <div class="hud-tools">
+          <button class="ghost-btn" id="favoriteButton" title="收藏">☆</button>
+          <button class="ghost-btn" id="editGameButton" title="重命名与分类">•••</button>
+          <button class="ghost-btn" id="exportButton" title="导出 SGF">⇩</button>
+          <button class="ghost-btn" id="focusButton" title="专注模式：隐藏一切（F）">⛶</button>
+        </div>
+      </section>
+
+      <div class="board-slot">
+        <div class="goban" id="goban">
+          <canvas id="goBoard" width="900" height="900" aria-label="19 路围棋棋盘"></canvas>
+        </div>
       </div>
 
-      <nav class="nav" aria-label="主导航">
-        <button class="nav-item active" data-view="library"><span>▦</span>棋谱库<em id="libraryCount">6</em></button>
+      <nav class="dock" id="dock" aria-label="工具">
+        <button data-dock="library" id="dockLibrary" title="棋谱库（⌘K）"><span>▦</span><em>棋谱</em><b id="libraryCount">0</b></button>
+        <button data-dock="analysis" id="dockAnalysis" title="AI 分析（A）"><span>◈</span><em>分析</em></button>
+        <button data-dock="timeline" id="dockTimeline" title="胜率走势（T）"><span>∿</span><em>走势</em></button>
+        <div class="dock-sep"></div>
+        <button id="numberToggle" class="active" title="显示手数"><span>⌗</span></button>
+        <button id="heatToggle" class="active" title="AI 候选点"><span>◉</span></button>
+        <button id="markButton" title="标记棋盘点"><span>△</span></button>
       </nav>
 
-      <div class="section-title"><span>棋谱</span><button id="newFolderButton" title="新建文件夹">＋</button></div>
-      <div class="folder-list" id="folderList">
-        <button class="folder active" data-folder="all"><span>◉</span>全部棋谱<b>6</b></button>
-        <button class="folder" data-folder="recent"><span>◇</span>最近复盘<b>3</b></button>
-        <button class="folder" data-folder="mine"><span>□</span>我的对局<b>6</b></button>
-        <button class="folder" data-folder="professional"><span>□</span>职业棋谱<b>2</b></button>
-        <button class="folder muted" data-folder="trash"><span>⌫</span>回收站<b>0</b></button>
+      <!-- 播放条：宽屏浮在棋盘下沿之外，窄屏并进网格流成为独立一行 -->
+      <div class="player-bar" id="playerBar">
+        <div class="transport">
+          <button id="firstButton" title="第一手">|‹</button>
+          <button id="prevButton" title="上一手（←）">‹</button>
+          <button class="play" id="playButton" title="播放 / 暂停（空格）">▶</button>
+          <button id="nextButton" title="下一手（→）">›</button>
+          <button id="lastButton" title="最后一手">›|</button>
+        </div>
+        <input id="moveSlider" type="range" min="0" max="62" value="38" aria-label="跳到第几手">
+        <span class="move-counter">第 <b id="moveNumber">38</b> / <b id="moveTotal">62</b> 手</span>
+        <select id="speedSelect" aria-label="播放速度"><option value="1200">0.5×</option><option value="700" selected>1×</option><option value="350">2×</option></select>
+      </div>
+    </div>
+
+    <!-- 抽屉层：默认浮在棋盘之上，可固定为并排 -->
+    <aside class="drawer drawer-left" id="libraryDrawer">
+      <div class="drawer-head">
+        <div>
+          <h2 id="panelTitle">全部棋谱</h2>
+          <p><span id="gameCount">0</span> 局</p>
+        </div>
+        <div class="drawer-head-tools">
+          <button id="filterButton" title="筛选棋谱">☷</button>
+          <button id="listViewButton" class="active" title="列表视图">☰</button>
+          <button id="gridViewButton" title="网格视图">▦</button>
+          <button class="pin-btn" data-pin="library" title="固定为并排">⇥</button>
+          <button class="close-btn" data-close-layer="library" title="关闭（Esc）">×</button>
+        </div>
       </div>
 
-      <div class="section-title"><span>标签</span><button id="newTagButton" title="新建标签">＋</button></div>
-      <div class="tags" id="tagList"></div>
+      <label class="search">
+        <span>⌕</span>
+        <input id="searchInput" type="search" placeholder="搜索棋手、赛事、标签…">
+        <kbd>⌘K</kbd>
+      </label>
 
-      <div class="storage">
-        <div><span>本地空间</span><b>1.2 GB / 10 GB</b></div>
-        <div class="storage-bar"><i></i></div>
-        <small>所有数据仅保存在此设备</small>
+      <div class="drawer-scroll">
+        <div class="section-title"><span>分类</span><button id="newFolderButton" title="新建文件夹">＋</button></div>
+        <div class="folder-list" id="folderList"></div>
+        <div class="section-title"><span>标签</span><button id="newTagButton" title="新建标签">＋</button></div>
+        <div class="tags" id="tagList"></div>
+        <div class="section-title"><span>棋谱</span></div>
+        <div class="game-list" id="gameList"></div>
+      </div>
+
+      <div class="drawer-foot">
+        <button class="primary-btn" id="importButton">＋ 导入 SGF</button>
+        <input id="fileInput" type="file" accept=".sgf" multiple hidden>
+        <button class="ghost-btn" id="soundButton" title="关闭声音">♪</button>
+        <button class="ghost-btn" id="settingsButton" title="分析设置">⚙</button>
       </div>
     </aside>
 
-    <main class="workspace">
-      <header class="topbar">
-        <label class="search"><span>⌕</span><input id="searchInput" type="search" placeholder="搜索棋手、赛事、标签或棋谱内容…"><kbd>⌘ K</kbd></label>
-        <div class="top-actions">
-          <button class="icon-btn active" id="soundButton" title="关闭声音">♪</button>
-          <button class="icon-btn" id="settingsButton" title="设置">⚙</button>
-          <button class="primary-btn" id="importButton">＋ 导入 SGF</button>
-          <input id="fileInput" type="file" accept=".sgf" multiple hidden>
+    <aside class="drawer drawer-right" id="analysis-panel">
+      <div class="drawer-head">
+        <div>
+          <h2>AI 分析</h2>
+          <p><em class="status" id="engineStatus"><i></i>连接 KataGo</em></p>
         </div>
-      </header>
-
-      <section class="content">
-        <div class="library-panel">
-          <div class="panel-heading">
-            <div><h1 id="panelTitle">全部棋谱</h1><p><span id="gameCount">6</span> 局棋谱 · 最近更新于今天</p></div>
-            <div class="view-actions"><button id="filterButton" title="筛选">☷</button><button id="listViewButton" class="active" title="列表视图">☰</button><button id="gridViewButton" title="网格视图">▦</button></div>
-          </div>
-          <div class="game-list" id="gameList"></div>
+        <div class="drawer-head-tools">
+          <button class="pin-btn" data-pin="analysis" title="固定为并排">⇤</button>
+          <button class="close-btn" data-close-layer="analysis" title="关闭（Esc）">×</button>
         </div>
+      </div>
 
-        <section class="review-panel">
-          <div class="game-header">
-            <div class="breadcrumb"><span id="breadcrumbFolder">全部棋谱</span><b>›</b><strong id="gameTitle">秋季升段赛 · 第 3 轮</strong><em class="rule-chip hidden" id="ruleChip">明清规则</em></div>
-            <div class="game-actions"><button id="favoriteButton" title="收藏">☆</button><button id="exportButton" title="导出 SGF">⇩</button><button id="editGameButton" title="重命名与分类">•••</button></div>
+      <div class="drawer-scroll">
+        <section class="eval-card">
+          <div class="eval-top"><span>局面评估 · 第 <b id="evalMove">38</b> 手</span><span>黑棋视角</span></div>
+          <div class="eval-numbers">
+            <div><small>黑棋胜率</small><strong id="evalBlack">--<sup>%</sup></strong></div>
+            <div class="score-lead"><span id="leadLabel">等待分析</span><b id="scoreLead">-- 目</b></div>
+            <div><small>白棋胜率</small><strong id="evalWhite">--<sup>%</sup></strong></div>
           </div>
-
-          <div class="review-body">
-            <div class="board-column">
-              <div class="players">
-                <div class="player"><i class="stone black"></i><div><strong id="blackName">林野 <small>7段</small></strong><span>黑棋</span></div><b id="blackWin">43.2%</b></div>
-                <div class="versus"><span>2026.08.24</span><strong>中盘胜</strong><span>贴 7.5 目</span></div>
-                <div class="player white-player"><b id="whiteWin">56.8%</b><div><strong id="whiteName">陈星 <small>6段</small></strong><span>白棋</span></div><i class="stone white"></i></div>
-              </div>
-
-              <div class="board-wrap">
-                <canvas id="goBoard" width="760" height="760" aria-label="19路围棋棋盘"></canvas>
-                <div class="board-tools">
-                  <button id="numberToggle" class="active" title="显示手数">⌗</button>
-                  <button id="heatToggle" class="active" title="AI 候选点">◉</button>
-                  <button id="markButton" title="标记当前点">△</button>
-                </div>
-              </div>
-
-              <div class="playback">
-                <button id="firstButton" title="第一手">|‹</button>
-                <button id="prevButton" title="上一手">‹</button>
-                <button class="play" id="playButton" title="自动播放">▶</button>
-                <button id="nextButton" title="下一手">›</button>
-                <button id="lastButton" title="最后一手">›|</button>
-                <div class="move-progress"><input id="moveSlider" type="range" min="0" max="62" value="38"><span>第 <b id="moveNumber">38</b> / <b id="moveTotal">62</b> 手</span></div>
-                <select id="speedSelect" aria-label="播放速度"><option value="1200">0.5×</option><option value="700" selected>1×</option><option value="350">2×</option></select>
-              </div>
-            </div>
-
-            <aside id="analysis-panel" class="analysis-panel">
-              <div class="analysis-tabs"><strong>AI 分析</strong></div>
-              <div id="aiTab" class="tab-content">
-                <div class="evaluation">
-                  <div class="eval-top"><span>局面评估 · 第 <b id="evalMove">38</b> 手</span><em class="status" id="engineStatus"><i></i>连接 KataGo</em></div>
-                  <div class="eval-numbers"><div><small>黑棋胜率</small><strong id="evalBlack">--<sup>%</sup></strong></div><div class="score-lead"><span id="leadLabel">等待分析</span><b id="scoreLead">-- 目</b></div><div><small>白棋胜率</small><strong id="evalWhite">--<sup>%</sup></strong></div></div>
-                  <div class="winbar"><i id="blackBar"></i></div>
-                  <div class="tax-note hidden" id="taxNote"></div>
-                  <div class="swing" id="swingText">正在读取本地 CUDA KataGo…</div>
-                </div>
-
-                <div class="candidate-section">
-                  <div class="subheading"><h3>AI 推荐</h3><span id="visitsLabel">等待引擎</span></div>
-                  <div id="candidateList" class="candidate-list"><div class="empty-analysis">分析后显示推荐着法</div></div>
-                </div>
-
-                <div class="analyze-box">
-                  <div><span id="analysisLabel">等待本地引擎</span><b id="analysisMeta">KataGo</b></div>
-                  <div class="analysis-progress"><i id="analysisProgress"></i></div>
-                  <button id="analyzeButton">分析整局</button>
-                </div>
-              </div>
-            </aside>
-          </div>
-
-          <div id="chart-panel" class="chart-panel">
-            <div class="chart-heading"><div><h3 id="chartTitle">胜率走势</h3><span id="chartLegend"><i class="legend-black"></i>黑棋胜率</span><span><i class="legend-key"></i>关键手</span><span id="chartRuleNote" class="rule-note"></span></div><div class="chart-tabs"><button class="active" data-chart="winrate">胜率</button><button data-chart="score">目差</button></div></div>
-            <canvas id="winChart" width="1200" height="220"></canvas>
-          </div>
+          <div class="winbar"><i id="blackBar"></i></div>
+          <div class="swing" id="swingText">正在读取本地 CUDA KataGo…</div>
+          <div class="tax-note hidden" id="taxNote"></div>
         </section>
-      </section>
-    </main>
+
+        <div class="subheading"><h3>AI 推荐</h3><span id="visitsLabel">等待引擎</span></div>
+        <div id="candidateList" class="candidate-list"><div class="empty-analysis">分析后显示推荐着法</div></div>
+
+        <div class="analyze-box">
+          <div><span id="analysisLabel">等待本地引擎</span><b id="analysisMeta">KataGo</b></div>
+          <div class="analysis-progress"><i id="analysisProgress"></i></div>
+          <button id="analyzeButton">分析整局</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 走势：先是一条细带，点开变成完整图表 -->
+    <section class="timeline" id="chart-panel">
+      <div class="timeline-head">
+        <div class="timeline-title">
+          <h3 id="chartTitle">胜率走势</h3>
+          <span id="chartLegend"><i class="legend-black"></i>黑棋胜率</span>
+          <span id="chartRuleNote" class="rule-note"></span>
+        </div>
+        <div class="timeline-tools">
+          <div class="chart-tabs"><button class="active" data-chart="winrate">胜率</button><button data-chart="score">目差</button></div>
+          <button class="ghost-btn" id="timelineExpandButton" title="展开完整图表">⌃</button>
+          <button class="close-btn" data-close-layer="timeline" title="关闭">×</button>
+        </div>
+      </div>
+      <canvas id="winChart" width="1200" height="120"></canvas>
+    </section>
+
+    <div class="hint-bar" id="hintBar"></div>
   </div>
 
   <div id="toast" class="toast" role="status"></div>
+
   <div id="gameModal" class="modal-backdrop hidden">
     <form class="modal" id="gameForm">
       <div class="modal-heading"><div><small id="gameModalStep">棋谱属性</small><h2 id="gameModalTitle">编辑棋谱</h2></div><button type="button" class="modal-close" data-close="gameModal">×</button></div>
@@ -172,6 +213,7 @@
       <div class="modal-actions"><button type="button" class="secondary-btn" data-close="folderModal">取消</button><button type="submit" class="primary-btn">创建</button></div>
     </form>
   </div>
+
   <script src="core.js"></script>
   <script src="collection.js"></script>
   <script src="app.js"></script>
