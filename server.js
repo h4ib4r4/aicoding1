@@ -71,7 +71,10 @@ const server = http.createServer(async (request, response) => {
       response.writeHead(404).end('Not found');
       return;
     }
-    response.writeHead(200, { 'Content-Type': mimeTypes[path.extname(filePath)] || 'application/octet-stream' });
+    const headers = { 'Content-Type': mimeTypes[path.extname(filePath)] || 'application/octet-stream' };
+    // 源码文件禁止缓存：否则浏览器可能拿旧的 core.js 配新的 app.js，整个界面直接崩
+    if (/\.(?:html|css|js)$/i.test(filePath)) headers['Cache-Control'] = 'no-store';
+    response.writeHead(200, headers);
     response.end(data);
   });
 });

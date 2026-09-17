@@ -1,4 +1,4 @@
-const { replay, capturedStones, parseSgf, pointName, gtpPointToCoords, groupCounts, groupTaxAdjustment, resolveRules } = window.YijingCore;
+const { replay, capturedStones, parseSgf, pointName, gtpPointToCoords, groupCounts, groupTaxAdjustment, moveNumberAt, CANDIDATE_MARKS, resolveRules } = window.YijingCore;
 
 const baseMoves = [
   [3,15],[15,3],[15,15],[3,3],[5,2],[2,5],[16,6],[16,10],[13,16],[10,16],
@@ -56,8 +56,6 @@ const customTags = loadLocal('yijing.tags', []);
 let currentGame = games[0];
 let currentMove = 38;
 let playing = null;
-let showNumbers = true;
-let showHeat = true;
 let mark = null;
 let marking = false;
 let analyses = new Map();
@@ -66,8 +64,13 @@ let activeFolder = 'all';
 let chartMode = 'winrate';
 let listMode = 'list';
 let libraryFilter = { result: '', favorites: false };
-let settings = { positionVisits: 64, fullVisits: 24, criticalThreshold: 10, soundEnabled: true, voiceEnabled: true, volume: 0.55, ...loadLocal('yijing.settings', {}) };
+let settings = { positionVisits: 64, fullVisits: 24, criticalThreshold: 10, soundEnabled: true, voiceEnabled: true, volume: 0.55, showNumbers: true, showHeat: true, ...loadLocal('yijing.settings', {}) };
+// 手数与 AI 候选点是显示项，状态存进 settings 一起落盘，重开浏览器保持不变
+let showNumbers = settings.showNumbers !== false;
+let showHeat = settings.showHeat !== false;
 let audioContext = null;
+let audioMasterGain = null;
+let noiseBuffer = null;
 let pendingJudgementMove = null;
 let lastSpokenMove = null;
 
@@ -247,6 +250,11 @@ function drawBoard(){
 
   const board=replay(currentGame.moves,currentMove,19,currentGame.setup||[]);
   const radius=step*.45;
+  // 同一交叉点被反复争夺时取最后一次落子，与「第 N 手落在哪里」一致
+  const numbers=moveNumberAt(currentGame.moves,currentMove);
+  const lastMove=currentMove?currentGame.moves[currentMove-1]:null;
+  const lastKey=lastMove&&!lastMove.pass?`${lastMove.x},${lastMove.y}`:'';
+
   board.forEach((row,y)=>row.forEach((color,x)=>{
     if(!color)return;
     const cx=pad+x*step,cy=pad+y*step;
@@ -257,31 +265,45 @@ function drawBoard(){
     ctx.shadowColor='rgba(76,50,31,.42)';ctx.shadowBlur=4.2*k;ctx.shadowOffsetY=2.2*k;
     ctx.beginPath();ctx.arc(cx,cy,radius,0,Math.PI*2);ctx.fill();
     ctx.shadowColor='transparent';ctx.shadowBlur=0;ctx.shadowOffsetY=0;
-    if(showNumbers){
-      const idx=currentGame.moves.slice(0,currentMove).map(m=>`${m.x},${m.y}`).lastIndexOf(`${x},${y}`)+1;
-      if(idx){
-        ctx.fillStyle=color==='B'?'#ececec':'#333333';
-        ctx.font=`600 ${Math.max(8,Math.round(step*.36))}px "Microsoft YaHei UI","PingFang SC",sans-serif`;
-        ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(idx,cx,cy);
-      }
-    }
   }));
 
-  if(currentMove){
-    const last=currentGame.moves[currentMove-1];
-    if(last&&!last.pass){
-      ctx.strokeStyle='#c95b46';ctx.lineWidth=Math.max(2,3*k);
-      ctx.beginPath();ctx.arc(pad+last.x*step,pad+last.y*step,radius*.42,0,Math.PI*2);ctx.stroke();
-    }
+  // 手数用数字；当前这一手换成强调色，跟其余手数拉开层次
+  ctx.font=`600 ${Math.max(8,Math.round(step*.36))}px "Microsoft YaHei UI","PingFang SC",sans-serif`;
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  board.forEach((row,y)=>row.forEach((color,x)=>{
+    if(!color)return;
+    const index=numbers.get(`${x},${y}`);
+    if(!index)return;
+    const isLast=`${x},${y}`===lastKey;
+    if(!showNumbers&&!isLast)return;
+    const cx=pad+x*step,cy=pad+y*step;
+    ctx.fillStyle=isLast?(color==='B'?'#ffab84':'#c03f28'):(color==='B'?'#ececec':'#333333');
+    ctx.fillText(index,cx,cy);
+  }));
+
+  // 实际着棋点：棋子外圈的高亮环，关掉手数也一眼能认出来
+  if(lastMove&&!lastMove.pass){
+    const cx=pad+lastMove.x*step,cy=pad+lastMove.y*step;
+    ctx.beginPath();ctx.arc(cx,cy,radius*1.18,0,Math.PI*2);
+    ctx.strokeStyle='rgba(214,79,52,.28)';ctx.lineWidth=Math.max(4,6.4*k);ctx.stroke();
+    ctx.beginPath();ctx.arc(cx,cy,radius*1.18,0,Math.PI*2);
+    ctx.strokeStyle='#d64f34';ctx.lineWidth=Math.max(1.6,2.3*k);ctx.stroke();
   }
+
+  // AI 候选点改用字母，画成空心圈 + 白描边：形状、字形都跟棋子/手数分得开
   if(showHeat&&currentMove<currentGame.moves.length){
+    const palette=['#1f7a52','#a9741a','#a04a35'];
+    const labelFont=`700 ${Math.max(9,Math.round(step*.33))}px "Microsoft YaHei UI","PingFang SC",sans-serif`;
     candidates().forEach((c,i)=>{
-      const cx=pad+c.x*step,cy=pad+c.y*step,r=radius*(.86-i*.11);
-      ctx.fillStyle=['rgba(47,123,88,.82)','rgba(211,152,61,.82)','rgba(182,94,75,.82)'][i];
-      ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle='#fff';
-      ctx.font=`600 ${Math.max(9,Math.round(step*.3))}px "Microsoft YaHei UI","PingFang SC",sans-serif`;
-      ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(i+1,cx,cy);
+      const cx=pad+c.x*step,cy=pad+c.y*step;
+      const color=palette[i]||palette[palette.length-1];
+      const mark=CANDIDATE_MARKS[i]||String(i+1);
+      ctx.strokeStyle=color;ctx.lineWidth=Math.max(1.3,(i?1.7:2.4)*k);
+      ctx.beginPath();ctx.arc(cx,cy,step*.27,0,Math.PI*2);ctx.stroke();
+      ctx.font=labelFont;ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.lineWidth=Math.max(2.4,3.4*k);ctx.strokeStyle='rgba(255,252,246,.92)';
+      ctx.strokeText(mark,cx,cy);
+      ctx.fillStyle=color;ctx.fillText(mark,cx,cy);
     });
   }
   if(mark){
@@ -303,7 +325,7 @@ function currentAnalysis(){return analyses.get(currentMove)}
 function candidates(){return (currentAnalysis()?.moveInfos||[]).slice(0,3).map(info=>({...gtpPointToCoords(info.move),...info})).filter(move=>Number.isInteger(move.x)&&Number.isInteger(move.y))}
 
 function toBlackWin(_result, rate){return rate*100}
-function renderCandidates(){const result=currentAnalysis();const moves=candidates();$('candidateList').innerHTML=moves.length?moves.map((c,i)=>`<div class="candidate ${i===0?'active':''}" data-x="${c.x}" data-y="${c.y}"><span class="candidate-index">${i+1}</span><div class="candidate-main"><b>${c.move}</b><span>${i?'候选变化':'KataGo 首选'} · ${c.visits||0} 次访问</span></div><div class="candidate-win"><b>${toBlackWin(result,c.winrate).toFixed(1)}%</b><span>${Number(c.scoreLead||0)>=0?'+':''}${Number(c.scoreLead||0).toFixed(1)} 目</span></div></div>`).join(''):'<div class="empty-analysis">分析后显示推荐着法</div>';document.querySelectorAll('.candidate').forEach(el=>el.onclick=()=>{mark={x:+el.dataset.x,y:+el.dataset.y};drawBoard();showToast(`已在棋盘标出候选点 ${pointName(mark.x,mark.y)}`)})}
+function renderCandidates(){const result=currentAnalysis();const moves=candidates();$('candidateList').innerHTML=moves.length?moves.map((c,i)=>`<div class="candidate ${i===0?'active':''}" data-x="${c.x}" data-y="${c.y}"><span class="candidate-index">${CANDIDATE_MARKS[i]||i+1}</span><div class="candidate-main"><b>${c.move}</b><span>${i?'候选变化':'KataGo 首选'} · ${c.visits||0} 次访问</span></div><div class="candidate-win"><b>${toBlackWin(result,c.winrate).toFixed(1)}%</b><span>${Number(c.scoreLead||0)>=0?'+':''}${Number(c.scoreLead||0).toFixed(1)} 目</span></div></div>`).join(''):'<div class="empty-analysis">分析后显示推荐着法</div>';document.querySelectorAll('.candidate').forEach(el=>el.onclick=()=>{mark={x:+el.dataset.x,y:+el.dataset.y};drawBoard();showToast(`已在棋盘标出候选点 ${pointName(mark.x,mark.y)}`)})}
 
 function resizeChartCanvas(){const rect=chartCanvas.getBoundingClientRect(),dpr=window.devicePixelRatio||1,width=Math.max(1,Math.round(rect.width)),height=Math.max(1,Math.round(rect.height));const pixelWidth=Math.round(width*dpr),pixelHeight=Math.round(height*dpr);if(chartCanvas.width!==pixelWidth||chartCanvas.height!==pixelHeight){chartCanvas.width=pixelWidth;chartCanvas.height=pixelHeight}chartCtx.setTransform(dpr,0,0,dpr,0,0);return {width,height}}
 
@@ -375,29 +397,81 @@ function drawChart(){
 function renderAnalysis(){const result=currentAnalysis();if(!result){$('blackWin').textContent=$('whiteWin').textContent='--';$('evalBlack').innerHTML=$('evalWhite').innerHTML='--<sup>%</sup>';$('blackBar').style.width='0';$('leadLabel').textContent='等待分析';$('scoreLead').textContent='-- 目';$('visitsLabel').textContent='等待引擎';$('swingText').className='swing';$('swingText').textContent='当前手尚未分析';renderCandidates();return}const black=toBlackWin(result,result.rootInfo.winrate),white=100-black,lead=Number(result.rootInfo.scoreLead||0);$('blackWin').textContent=black.toFixed(1)+'%';$('whiteWin').textContent=white.toFixed(1)+'%';$('evalBlack').innerHTML=black.toFixed(1)+'<sup>%</sup>';$('evalWhite').innerHTML=white.toFixed(1)+'<sup>%</sup>';$('blackBar').style.width=black+'%';$('leadLabel').textContent=`${lead>=0?'黑棋':'白棋'}领先`;$('scoreLead').textContent=`${lead>=0?'+':''}${lead.toFixed(1)} 目`;$('visitsLabel').textContent=`访问 ${result.rootInfo.visits||0} 次`;const previous=analyses.get(currentMove-1);const delta=previous?black-toBlackWin(previous,previous.rootInfo.winrate):null;const swing=$('swingText');swing.className='swing '+(delta===null?'':delta<0?'down':'up');swing.textContent=delta===null?`KataGo · ${result.rootInfo.visits||0} 次访问`:`${delta<0?'↓':'↑'} 较上一手 ${delta>=0?'+':''}${delta.toFixed(1)}% · ${Math.abs(delta)>10?'关键手':'局面平稳'}`;renderCandidates()}
 function update(){currentMove=Math.max(0,Math.min(currentMove,currentGame.moves.length));$('moveSlider').value=currentMove;$('moveNumber').textContent=currentMove;$('evalMove').textContent=currentMove;renderAnalysis();drawBoard();drawChart()}
 
+/* ── 音效：云子磕在木盘上的清脆声，用「噪声瞬态 + 木腔谐振 + 低频托底」合成 ──
+   纯振荡器听起来像电子提示音；清脆感来自极短的宽带瞬态，木质厚度来自中频谐振，
+   再把每次的音高与衰减做小幅随机，连续落子才不会像复读。 */
 function ensureAudio() {
   if (!settings.soundEnabled) return null;
-  if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
-  if (audioContext.state === 'suspended') audioContext.resume();
+  const AudioCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtor) return null;
+  if (!audioContext || audioContext.state === 'closed') { audioContext = new AudioCtor(); audioMasterGain = null; }
+  if (audioContext.state === 'suspended') { const resumed = audioContext.resume(); if (resumed?.catch) resumed.catch(() => {}); }
   return audioContext;
+}
+function audioBus(ctx) {
+  if (!audioMasterGain || audioMasterGain.context !== ctx) {
+    audioMasterGain = ctx.createGain();
+    audioMasterGain.gain.value = 1;
+    audioMasterGain.connect(ctx.destination);
+  }
+  audioMasterGain.gain.setTargetAtTime(Math.max(.0001, Math.min(1, Number(settings.volume) || 0)), ctx.currentTime, .01);
+  return audioMasterGain;
+}
+// 白噪声只生成一次，反复复用
+function whiteNoise(ctx) {
+  if (!noiseBuffer || noiseBuffer.sampleRate !== ctx.sampleRate) {
+    const length = Math.max(1, Math.round(ctx.sampleRate * .2));
+    noiseBuffer = ctx.createBuffer(1, length, ctx.sampleRate);
+    const data = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+  }
+  return noiseBuffer;
+}
+// 一段带限噪声：起振 1ms、指数衰减，越短越清脆
+function noiseClick(ctx, bus, at, { freq, q, dur, gain, type = 'bandpass' }) {
+  const source = ctx.createBufferSource();
+  source.buffer = whiteNoise(ctx);
+  const filter = ctx.createBiquadFilter();
+  filter.type = type; filter.frequency.value = freq; filter.Q.value = q;
+  const env = ctx.createGain();
+  env.gain.setValueAtTime(.0001, at);
+  env.gain.exponentialRampToValueAtTime(Math.max(.0002, gain), at + .0012);
+  env.gain.exponentialRampToValueAtTime(.0001, at + dur);
+  source.connect(filter); filter.connect(env); env.connect(bus);
+  source.start(at); source.stop(at + dur + .03);
+}
+// 木盘被敲到的低频托底
+function woodThump(ctx, bus, at, { freq, dur, gain }) {
+  const osc = ctx.createOscillator(), env = ctx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(freq, at);
+  osc.frequency.exponentialRampToValueAtTime(Math.max(50, freq * .62), at + dur);
+  env.gain.setValueAtTime(.0001, at);
+  env.gain.exponentialRampToValueAtTime(Math.max(.0002, gain), at + .004);
+  env.gain.exponentialRampToValueAtTime(.0001, at + dur);
+  osc.connect(env); env.connect(bus);
+  osc.start(at); osc.stop(at + dur + .03);
+}
+// 一颗子：高频瞬态（脆）+ 中频木腔（厚）+ 低频托底（沉）
+function stoneHit(ctx, bus, at, gain = 1, spread = 1) {
+  const pitch = 1 + (Math.random() - .5) * .18 * spread;
+  noiseClick(ctx, bus, at, { freq: 5200 * pitch, q: 1.2, dur: .018, gain: .26 * gain, type: 'highpass' });
+  noiseClick(ctx, bus, at, { freq: 2500 * pitch, q: 9, dur: .05, gain: .3 * gain });
+  noiseClick(ctx, bus, at + .002, { freq: 880 * pitch, q: 3.2, dur: .085, gain: .15 * gain });
+  woodThump(ctx, bus, at, { freq: 205 * pitch, dur: .1, gain: .1 * gain });
 }
 function playStoneSound(capture = false) {
   const ctx = ensureAudio();
   if (!ctx) return;
-  const now = ctx.currentTime;
-  const gain = ctx.createGain();
-  const osc = ctx.createOscillator();
-  osc.type = capture ? 'triangle' : 'sine';
-  osc.frequency.setValueAtTime(capture ? 150 : 245, now);
-  osc.frequency.exponentialRampToValueAtTime(capture ? 75 : 130, now + (capture ? .16 : .08));
-  gain.gain.setValueAtTime(Math.max(.001, settings.volume * (capture ? .28 : .16)), now);
-  gain.gain.exponentialRampToValueAtTime(.001, now + (capture ? .18 : .1));
-  osc.connect(gain).connect(ctx.destination); osc.start(now); osc.stop(now + (capture ? .2 : .12));
-  if (capture) {
-    const click = ctx.createOscillator(); const clickGain = ctx.createGain();
-    click.type = 'square'; click.frequency.value = 520; clickGain.gain.setValueAtTime(settings.volume * .08, now); clickGain.gain.exponentialRampToValueAtTime(.001, now + .05);
-    click.connect(clickGain).connect(ctx.destination); click.start(now); click.stop(now + .06);
+  const bus = audioBus(ctx);
+  const now = ctx.currentTime + .012;
+  if (!capture) { stoneHit(ctx, bus, now); return; }
+  // 提子：几颗子被依次拎起、相互轻碰，收尾一声闷响
+  const count = 3 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < count; i++) {
+    stoneHit(ctx, bus, now + i * (.017 + Math.random() * .013), Math.max(.35, 1 - i * .16), 2.4);
   }
+  woodThump(ctx, bus, now + count * .02, { freq: 150, dur: .17, gain: .13 });
 }
 function speakJudgement(result) {
   if (!settings.voiceEnabled || !window.speechSynthesis || !result || currentMove < 1 || lastSpokenMove === currentMove) return;
@@ -441,13 +515,18 @@ $('favoriteButton').onclick=()=>{currentGame.favorite=!currentGame.favorite;save
 $('filterButton').onclick=()=>{$('resultFilter').value=libraryFilter.result;$('favoriteFilter').checked=libraryFilter.favorites;$('filterModal').classList.remove('hidden')};
 $('filterForm').onsubmit=e=>{e.preventDefault();libraryFilter={result:$('resultFilter').value,favorites:$('favoriteFilter').checked};$('filterModal').classList.add('hidden');$('filterButton').classList.toggle('active',Boolean(libraryFilter.result||libraryFilter.favorites));renderGames($('searchInput').value)};
 $('resetFilterButton').onclick=()=>{libraryFilter={result:'',favorites:false};$('resultFilter').value='';$('favoriteFilter').checked=false;$('filterButton').classList.remove('active');renderGames($('searchInput').value);$('filterModal').classList.add('hidden')};
-$('settingsButton').onclick=()=>{$('positionVisitsInput').value=settings.positionVisits;$('fullVisitsInput').value=settings.fullVisits;$('criticalThresholdInput').value=settings.criticalThreshold;$('soundEnabledInput').checked=settings.soundEnabled;$('voiceEnabledInput').checked=settings.voiceEnabled;$('volumeInput').value=settings.volume;$('settingsModal').classList.remove('hidden')};
-$('settingsForm').onsubmit=e=>{e.preventDefault();settings={...settings,positionVisits:Number($('positionVisitsInput').value),fullVisits:Number($('fullVisitsInput').value),criticalThreshold:Number($('criticalThresholdInput').value),soundEnabled:$('soundEnabledInput').checked,voiceEnabled:$('voiceEnabledInput').checked,volume:Number($('volumeInput').value)};saveLibrary();$('soundButton').classList.toggle('active',settings.soundEnabled);$('soundButton').title=settings.soundEnabled?'关闭声音':'开启声音';$('settingsModal').classList.add('hidden');drawChart();showToast('分析设置已保存')};
+$('settingsButton').onclick=()=>{$('positionVisitsInput').value=settings.positionVisits;$('fullVisitsInput').value=settings.fullVisits;$('criticalThresholdInput').value=settings.criticalThreshold;$('soundEnabledInput').checked=settings.soundEnabled;$('voiceEnabledInput').checked=settings.voiceEnabled;$('volumeInput').value=settings.volume;$('showNumbersInput').checked=showNumbers;$('showHeatInput').checked=showHeat;$('settingsModal').classList.remove('hidden')};
+$('settingsForm').onsubmit=e=>{e.preventDefault();settings={...settings,positionVisits:Number($('positionVisitsInput').value),fullVisits:Number($('fullVisitsInput').value),criticalThreshold:Number($('criticalThresholdInput').value),soundEnabled:$('soundEnabledInput').checked,voiceEnabled:$('voiceEnabledInput').checked,volume:Number($('volumeInput').value)};saveLibrary();setShowNumbers($('showNumbersInput').checked,false);setShowHeat($('showHeatInput').checked,false);$('soundButton').classList.toggle('active',settings.soundEnabled);$('soundButton').title=settings.soundEnabled?'关闭声音':'开启声音';$('settingsModal').classList.add('hidden');drawChart();showToast('分析设置已保存')};
 document.querySelectorAll('[data-close]').forEach(button=>button.onclick=()=>closeModal(button.dataset.close));
 document.querySelectorAll('.modal-backdrop').forEach(backdrop=>backdrop.onclick=e=>{if(e.target===backdrop)closeModal(backdrop.id)});
 $('moveSlider').oninput=e=>setMove(e.target.value);$('firstButton').onclick=()=>setMove(0);$('prevButton').onclick=()=>setMove(currentMove-1);$('nextButton').onclick=()=>setMove(currentMove+1);$('lastButton').onclick=()=>setMove(currentGame.moves.length);$('playButton').onclick=togglePlay;
 $('speedSelect').onchange=()=>{if(playing){togglePlay();togglePlay()}};
-$('numberToggle').onclick=e=>{showNumbers=!showNumbers;e.currentTarget.classList.toggle('active',showNumbers);drawBoard()};$('heatToggle').onclick=e=>{showHeat=!showHeat;e.currentTarget.classList.toggle('active',showHeat);drawBoard()};$('markButton').onclick=e=>{marking=!marking;e.currentTarget.classList.toggle('active',marking);showToast(marking?'请选择棋盘交叉点':'已退出标记模式')};
+// 手数 / AI 候选点是显示项：状态写进 settings，dock 按钮、设置弹窗与棋盘三处同步
+function setShowNumbers(value,announce){showNumbers=value;settings.showNumbers=value;$('numberToggle').classList.toggle('active',value);$('numberToggle').title=`${value?'隐藏':'显示'}手数（N）`;const box=$('showNumbersInput');if(box)box.checked=value;saveLibrary();drawBoard();if(announce)showToast(value?'手数已显示（数字）':'手数已隐藏，仅保留当前手')}
+function setShowHeat(value,announce){showHeat=value;settings.showHeat=value;$('heatToggle').classList.toggle('active',value);$('heatToggle').title=`${value?'隐藏':'显示'} AI 候选点（H）`;const box=$('showHeatInput');if(box)box.checked=value;saveLibrary();drawBoard();if(announce)showToast(value?'AI 候选点已显示：字母 A / B / C':'AI 候选点已隐藏')}
+$('numberToggle').onclick=()=>setShowNumbers(!showNumbers,true);
+$('heatToggle').onclick=()=>setShowHeat(!showHeat,true);
+$('markButton').onclick=e=>{marking=!marking;e.currentTarget.classList.toggle('active',marking);showToast(marking?'请点棋盘交叉点标记（M 或 Esc 退出）':'已退出标记模式')};
 $('soundButton').onclick=e=>{settings.soundEnabled=!settings.soundEnabled;e.currentTarget.classList.toggle('active',settings.soundEnabled);e.currentTarget.title=settings.soundEnabled?'关闭声音':'开启声音';saveLibrary();if(settings.soundEnabled)playStoneSound(false)};
 boardCanvas.onclick=e=>{if(!marking)return;const {x,y}=boardCoordsFromEvent(e);if(x>=0&&x<19&&y>=0&&y<19){mark={x,y};marking=false;$('markButton').classList.remove('active');drawBoard();showToast(`已标记 ${pointName(x,y)}`)}};
 $('listViewButton').onclick=()=>{listMode='list';$('listViewButton').classList.add('active');$('gridViewButton').classList.remove('active');renderGames($('searchInput').value)};
@@ -471,6 +550,9 @@ document.addEventListener('keydown',e=>{
   else if(key==='a'){e.preventDefault();toggleLayer('analysis')}
   else if(key==='t'){e.preventDefault();toggleLayer('timeline')}
   else if(key==='f'){e.preventDefault();setFocus(!document.body.classList.contains('focus'))}
+  else if(key==='n'){e.preventDefault();setShowNumbers(!showNumbers,true)}
+  else if(key==='h'){e.preventDefault();setShowHeat(!showHeat,true)}
+  else if(key==='m'){e.preventDefault();$('markButton').click()}
   else if(e.key==='ArrowLeft')setMove(currentMove-1);
   else if(e.key==='ArrowRight')setMove(currentMove+1);
   else if(e.key===' '){e.preventDefault();togglePlay()}
@@ -612,4 +694,4 @@ function initLayers(){
 window.addEventListener('resize',()=>{applyLayout();drawBoard();drawChart()});
 if (needsCollection && saveLibrary()) localStorage.setItem('yijing.collection.danghu.v1', 'true');
 else if (rulesetBackfilled) saveLibrary();
-renderFolders();renderTags();selectGame(currentGame.id);initLayers();activity();
+renderFolders();renderTags();setShowNumbers(showNumbers,false);setShowHeat(showHeat,false);selectGame(currentGame.id);initLayers();activity();

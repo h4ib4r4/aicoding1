@@ -51,9 +51,9 @@
         <button data-dock="analysis" id="dockAnalysis" title="AI 分析（A）"><span>◈</span><em>分析</em></button>
         <button data-dock="timeline" id="dockTimeline" title="胜率走势（T）"><span>∿</span><em>走势</em></button>
         <div class="dock-sep"></div>
-        <button id="numberToggle" class="active" title="显示手数"><span>⌗</span></button>
-        <button id="heatToggle" class="active" title="AI 候选点"><span>◉</span></button>
-        <button id="markButton" title="标记棋盘点"><span>△</span></button>
+        <button id="numberToggle" class="active" title="隐藏手数（N）"><span>⌗</span><em>手数</em></button>
+        <button id="heatToggle" class="active" title="隐藏 AI 候选点（H）"><span>◉</span><em>AI 点</em></button>
+        <button id="markButton" title="标记棋盘点（M）"><span>△</span><em>标记</em></button>
       </nav>
 
       <!-- 播放条：宽屏浮在棋盘下沿之外，窄屏并进网格流成为独立一行 -->
@@ -136,6 +136,7 @@
         </section>
 
         <div class="subheading"><h3>AI 推荐</h3><span id="visitsLabel">等待引擎</span></div>
+        <p class="legend-note">棋盘上：<b>数字</b> = 手数 · <b>A / B / C</b> = AI 候选点 · <b>红圈</b> = 当前这一手</p>
         <div id="candidateList" class="candidate-list"><div class="empty-analysis">分析后显示推荐着法</div></div>
 
         <div class="analyze-box">
@@ -199,6 +200,11 @@
       <label>当前局面访问次数<input id="positionVisitsInput" type="number" min="8" max="500" step="8"></label>
       <label>整局每手访问次数<input id="fullVisitsInput" type="number" min="4" max="200" step="4"></label>
       <label>关键手阈值（胜率百分点）<input id="criticalThresholdInput" type="number" min="1" max="50"></label>
+      <div class="field-group">
+        <span>棋盘显示</span>
+        <label class="check-label"><input id="showNumbersInput" type="checkbox">棋子上标注手数（当前一手用红字）</label>
+        <label class="check-label"><input id="showHeatInput" type="checkbox">AI 候选点（字母 A / B / C）</label>
+      </div>
       <label class="check-label"><input id="soundEnabledInput" type="checkbox">启用落子和提子音效</label>
       <label class="check-label"><input id="voiceEnabledInput" type="checkbox">优手或劣手时播放趣味语音</label>
       <label>音量<input id="volumeInput" type="range" min="0" max="1" step="0.1"></label>

@@ -512,6 +512,17 @@ body.info-hidden .hud-info{opacity:0;pointer-events:none}
 .modal label input:focus,.modal label select:focus{outline:2px solid rgba(35,76,58,.18);border-color:var(--green-2)}
 .modal .check-label{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--ink-soft)}
 .modal .check-label input{display:block;width:auto;height:auto;margin:0;accent-color:var(--green)}
+.modal .field-group{
+  margin:0 0 15px;padding:10px 12px 11px;
+  border:1px solid var(--line-soft);border-radius:11px;background:#faf9f5;
+}
+.modal .field-group>span{
+  display:block;font-size:9.5px;letter-spacing:.7px;color:var(--faint);margin-bottom:9px;
+}
+.modal .field-group .check-label{margin-bottom:9px}
+.modal .field-group .check-label:last-child{margin-bottom:0}
+.legend-note{margin:0 9px 9px;font-size:9.5px;line-height:1.6;color:var(--faint)}
+.legend-note b{font-weight:600;color:#6f7a72}
 .modal-hint{font-size:10.5px;color:var(--faint);line-height:1.6;margin:0 0 16px}
 .modal-actions{display:flex;gap:9px;justify-content:flex-end}
 .modal-actions.split .danger-btn{margin-right:auto}

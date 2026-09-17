@@ -99,6 +99,24 @@
     return paid('W') - paid('B');
   }
 
+  // 棋盘上每颗子该显示的手数。同一交叉点被反复争夺时取最后一次落子，
+  // 与「第 N 手落在哪里」的直觉一致。
+  function moveNumberAt(moves, upTo) {
+    const list = Array.isArray(moves) ? moves : [];
+    const limit = Math.max(0, Math.min(Number.isFinite(Number(upTo)) ? Number(upTo) : list.length, list.length));
+    const numbers = new Map();
+    for (let index = 0; index < limit; index++) {
+      const move = list[index];
+      if (!move || move.pass) continue;
+      numbers.set(`${move.x},${move.y}`, index + 1);
+    }
+    return numbers;
+  }
+
+  // AI 候选点用字母、手数用数字：两套标记从字形上就分得开，
+  // 棋盘与候选列表共用这一份，避免两边对不上号。
+  const CANDIDATE_MARKS = ['A', 'B', 'C'];
+
   // 古谱与现代棋谱的评估前提不同：座子制、白先、无贴目、还棋头。
   const RULE_PRESETS = {
     modern: { id: 'modern', name: '现代规则', rules: 'chinese', komi: 7.5, groupTax: false, note: '中国规则 · 贴 7.5 目' },
@@ -188,5 +206,5 @@
     return x < 0 || y < 0 || y >= size ? null : { x, y };
   }
 
-  return { BOARD_SIZE, emptyBoard, neighbors, groupAt, applyMove, replay, capturedStones, groupCounts, groupTaxAdjustment, RULE_PRESETS, resolveRules, sgfPoint, mainSgfSequence, parseSgf, pointName, gtpPointToCoords };
+  return { BOARD_SIZE, emptyBoard, neighbors, groupAt, applyMove, replay, capturedStones, groupCounts, groupTaxAdjustment, moveNumberAt, CANDIDATE_MARKS, RULE_PRESETS, resolveRules, sgfPoint, mainSgfSequence, parseSgf, pointName, gtpPointToCoords };
 });

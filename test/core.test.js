@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { emptyBoard, applyMove, replay, capturedStones, parseSgf, pointName, gtpPointToCoords, groupCounts, groupTaxAdjustment, resolveRules } = require('../core.js');
+const { emptyBoard, applyMove, replay, capturedStones, parseSgf, pointName, gtpPointToCoords, groupCounts, groupTaxAdjustment, moveNumberAt, CANDIDATE_MARKS, resolveRules } = require('../core.js');
 const { buildQuery, coordsToGtp } = require('../katago.js');
 
 test('落子并重放棋局', () => {
@@ -134,4 +134,32 @@ test('解析 SGF 的贴目与规则属性', () => {
   assert.equal(game.ruleset, 'Chinese');
   assert.equal(parseSgf('(;SZ[19];B[pd])').komi, null);
   assert.equal(parseSgf('(;SZ[19]KM[bad];B[pd])').komi, null);
+});
+
+test('棋面手数：取每个交叉点最后一次落子', () => {
+  const moves = [
+    { x: 3, y: 3, color: 'B' }, { x: 15, y: 15, color: 'W' },
+    { x: 3, y: 3, color: 'B' },                        // 同一点重下（劫争后回提）
+    { color: 'W', pass: true }, { x: 9, y: 9, color: 'B' }
+  ];
+  const numbers = moveNumberAt(moves);
+  assert.equal(numbers.get('3,3'), 3, '同一点取最后一次落子');
+  assert.equal(numbers.get('15,15'), 2);
+  assert.equal(numbers.get('9,9'), 5);
+  assert.equal(numbers.has('4,4'), false);
+
+  assert.equal(moveNumberAt(moves, 2).get('3,3'), 1, '按当前手数截断');
+  assert.equal(moveNumberAt(moves, 2).has('9,9'), false);
+  assert.equal(moveNumberAt(moves, 0).size, 0);
+  assert.equal(moveNumberAt(moves, 999).get('9,9'), 5, '越界的 upTo 收敛到总手数');
+  assert.equal(moveNumberAt(null).size, 0);
+  assert.equal(moveNumberAt(undefined, 5).size, 0);
+
+  const passOnly = moveNumberAt([{ color: 'B', pass: true }, { color: 'W', pass: true }]);
+  assert.equal(passOnly.size, 0, '虚着不占手数标记');
+});
+
+test('AI 候选点用字母标记，与手数（数字）不同形', () => {
+  assert.deepEqual(CANDIDATE_MARKS, ['A', 'B', 'C']);
+  for (const mark of CANDIDATE_MARKS) assert.equal(/^[A-Z]$/.test(mark), true, '候选标记必须是字母');
 });
